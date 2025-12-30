@@ -6,6 +6,7 @@ import Logging
 
 actor PostgresService {
     private var connections: [UUID: PostgresConnection] = [:]
+    private var connectionConfigs: [UUID: ConnectionConfig] = [:]
     private let eventLoopGroup: EventLoopGroup
     private let logger: Logger
 
@@ -21,14 +22,33 @@ actor PostgresService {
         print("[\(timestamp)] SQL: \(sql)")
     }
 
+    private func log(_ message: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        print("[\(timestamp)] \(message)")
+    }
+
     deinit {
         try? eventLoopGroup.syncShutdownGracefully()
     }
 
     func connect(config: ConnectionConfig) async throws -> Bool {
+        // Store config for reconnection
+        connectionConfigs[config.id] = config
+
         if connections[config.id] != nil {
-            return true
+            // Check if existing connection is healthy
+            if await isConnectionHealthy(configId: config.id) {
+                return true
+            }
+            // Connection is stale, remove it
+            connections.removeValue(forKey: config.id)
         }
+
+        return try await establishConnection(config: config)
+    }
+
+    private func establishConnection(config: ConnectionConfig) async throws -> Bool {
+        log("Connecting to \(config.host):\(config.port)/\(config.database)...")
 
         let pgConfig = PostgresConnection.Configuration(
             host: config.host,
@@ -47,6 +67,7 @@ actor PostgresService {
         )
 
         connections[config.id] = connection
+        log("Connected successfully to \(config.database)")
         return true
     }
 
@@ -54,17 +75,98 @@ actor PostgresService {
         guard let connection = connections[configId] else { return }
         try? await connection.close()
         connections.removeValue(forKey: configId)
+        connectionConfigs.removeValue(forKey: configId)
+        log("Disconnected")
     }
 
     func isConnected(configId: UUID) -> Bool {
         connections[configId] != nil
     }
 
-    func listDatabases(configId: UUID) async throws -> [DatabaseInfo] {
-        guard let connection = connections[configId] else {
+    func isConnectionHealthy(configId: UUID) async -> Bool {
+        guard let connection = connections[configId] else { return false }
+
+        do {
+            let query = PostgresQuery(unsafeSQL: "SELECT 1")
+            let rows = try await connection.query(query, logger: logger)
+            for try await _ in rows {
+                return true
+            }
+            return true
+        } catch {
+            log("Connection health check failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    func reconnectIfNeeded(configId: UUID) async throws -> Bool {
+        // Check if we have a stored config
+        guard let config = connectionConfigs[configId] else {
             throw PostgresError.notConnected
         }
 
+        // Check if connection is healthy
+        if await isConnectionHealthy(configId: configId) {
+            return true
+        }
+
+        // Connection is dead, try to reconnect
+        log("Connection lost, attempting to reconnect...")
+        connections.removeValue(forKey: configId)
+
+        do {
+            return try await establishConnection(config: config)
+        } catch {
+            log("Reconnection failed: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    private func ensureConnection(configId: UUID) async throws -> PostgresConnection {
+        // Try to get existing connection
+        if let connection = connections[configId] {
+            return connection
+        }
+
+        // Try to reconnect
+        _ = try await reconnectIfNeeded(configId: configId)
+
+        guard let connection = connections[configId] else {
+            throw PostgresError.notConnected
+        }
+        return connection
+    }
+
+    private func executeWithReconnect<T>(configId: UUID, operation: (PostgresConnection) async throws -> T) async throws -> T {
+        // First attempt
+        do {
+            let connection = try await ensureConnection(configId: configId)
+            return try await operation(connection)
+        } catch {
+            // Check if this looks like a connection error
+            let errorString = String(describing: error).lowercased()
+            let isConnectionError = errorString.contains("connection") ||
+                                   errorString.contains("closed") ||
+                                   errorString.contains("reset") ||
+                                   errorString.contains("broken") ||
+                                   errorString.contains("eof") ||
+                                   errorString.contains("timeout")
+
+            if isConnectionError {
+                log("Query failed with connection error, attempting reconnect...")
+                connections.removeValue(forKey: configId)
+
+                // Try to reconnect and retry
+                _ = try await reconnectIfNeeded(configId: configId)
+                let connection = try await ensureConnection(configId: configId)
+                return try await operation(connection)
+            } else {
+                throw error
+            }
+        }
+    }
+
+    func listDatabases(configId: UUID) async throws -> [DatabaseInfo] {
         let sql = """
             SELECT datname FROM pg_database
             WHERE datistemplate = false
@@ -72,24 +174,22 @@ actor PostgresService {
             """
         logSQL(sql)
 
-        let query = PostgresQuery(unsafeSQL: sql)
-        let rows = try await connection.query(query, logger: logger)
-        var databases: [DatabaseInfo] = []
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let rows = try await connection.query(query, logger: self.logger)
+            var databases: [DatabaseInfo] = []
 
-        for try await row in rows {
-            if let name = try? row.decode(String.self, context: .default) {
-                databases.append(DatabaseInfo(name: name))
+            for try await row in rows {
+                if let name = try? row.decode(String.self, context: .default) {
+                    databases.append(DatabaseInfo(name: name))
+                }
             }
-        }
 
-        return databases
+            return databases
+        }
     }
 
     func listSchemas(configId: UUID) async throws -> [SchemaInfo] {
-        guard let connection = connections[configId] else {
-            throw PostgresError.notConnected
-        }
-
         let sql = """
             SELECT schema_name FROM information_schema.schemata
             WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
@@ -97,24 +197,22 @@ actor PostgresService {
             """
         logSQL(sql)
 
-        let query = PostgresQuery(unsafeSQL: sql)
-        let rows = try await connection.query(query, logger: logger)
-        var schemas: [SchemaInfo] = []
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let rows = try await connection.query(query, logger: self.logger)
+            var schemas: [SchemaInfo] = []
 
-        for try await row in rows {
-            if let name = try? row.decode(String.self, context: .default) {
-                schemas.append(SchemaInfo(name: name))
+            for try await row in rows {
+                if let name = try? row.decode(String.self, context: .default) {
+                    schemas.append(SchemaInfo(name: name))
+                }
             }
-        }
 
-        return schemas
+            return schemas
+        }
     }
 
     func listTables(configId: UUID, schema: String = "public") async throws -> [TableInfo] {
-        guard let connection = connections[configId] else {
-            throw PostgresError.notConnected
-        }
-
         let sql = """
             SELECT table_schema, table_name, table_type
             FROM information_schema.tables
@@ -123,29 +221,27 @@ actor PostgresService {
             """
         logSQL(sql)
 
-        let query = PostgresQuery(unsafeSQL: sql)
-        let rows = try await connection.query(query, logger: logger)
-        var tables: [TableInfo] = []
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let rows = try await connection.query(query, logger: self.logger)
+            var tables: [TableInfo] = []
 
-        for try await row in rows {
-            let columns = row.makeRandomAccess()
-            if columns.count >= 3 {
-                let schemaName = try columns[0].decode(String.self, context: .default)
-                let tableName = try columns[1].decode(String.self, context: .default)
-                let tableTypeStr = try columns[2].decode(String.self, context: .default)
-                let tableType: TableInfo.TableType = tableTypeStr == "VIEW" ? .view : .table
-                tables.append(TableInfo(schema: schemaName, name: tableName, type: tableType))
+            for try await row in rows {
+                let columns = row.makeRandomAccess()
+                if columns.count >= 3 {
+                    let schemaName = try columns[0].decode(String.self, context: .default)
+                    let tableName = try columns[1].decode(String.self, context: .default)
+                    let tableTypeStr = try columns[2].decode(String.self, context: .default)
+                    let tableType: TableInfo.TableType = tableTypeStr == "VIEW" ? .view : .table
+                    tables.append(TableInfo(schema: schemaName, name: tableName, type: tableType))
+                }
             }
-        }
 
-        return tables
+            return tables
+        }
     }
 
     func getColumns(configId: UUID, schema: String, table: String) async throws -> [ColumnInfo] {
-        guard let connection = connections[configId] else {
-            throw PostgresError.notConnected
-        }
-
         let sql = """
             SELECT
                 c.column_name,
@@ -169,50 +265,50 @@ actor PostgresService {
             """
         logSQL(sql)
 
-        let query = PostgresQuery(unsafeSQL: sql)
-        let rows = try await connection.query(query, logger: logger)
-        var columns: [ColumnInfo] = []
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let rows = try await connection.query(query, logger: self.logger)
+            var columns: [ColumnInfo] = []
 
-        for try await row in rows {
-            let cols = row.makeRandomAccess()
-            if cols.count >= 5 {
-                let name = try cols[0].decode(String.self, context: .default)
-                let dataType = try cols[1].decode(String.self, context: .default)
-                let isNullableStr = try cols[2].decode(String.self, context: .default)
-                let ordinal = try cols[3].decode(Int.self, context: .default)
-                let isPK = try cols[4].decode(Bool.self, context: .default)
+            for try await row in rows {
+                let cols = row.makeRandomAccess()
+                if cols.count >= 5 {
+                    let name = try cols[0].decode(String.self, context: .default)
+                    let dataType = try cols[1].decode(String.self, context: .default)
+                    let isNullableStr = try cols[2].decode(String.self, context: .default)
+                    let ordinal = try cols[3].decode(Int.self, context: .default)
+                    let isPK = try cols[4].decode(Bool.self, context: .default)
 
-                columns.append(ColumnInfo(
-                    name: name,
-                    dataType: dataType,
-                    isNullable: isNullableStr == "YES",
-                    isPrimaryKey: isPK,
-                    ordinalPosition: ordinal
-                ))
+                    columns.append(ColumnInfo(
+                        name: name,
+                        dataType: dataType,
+                        isNullable: isNullableStr == "YES",
+                        isPrimaryKey: isPK,
+                        ordinalPosition: ordinal
+                    ))
+                }
             }
-        }
 
-        return columns
+            return columns
+        }
     }
 
     func getTableRowCount(configId: UUID, schema: String, table: String) async throws -> Int {
-        guard let connection = connections[configId] else {
-            throw PostgresError.notConnected
-        }
-
         let sql = "SELECT COUNT(*) FROM \"\(schema)\".\"\(table)\""
         logSQL(sql)
 
-        let query = PostgresQuery(unsafeSQL: sql)
-        let rows = try await connection.query(query, logger: logger)
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let rows = try await connection.query(query, logger: self.logger)
 
-        for try await row in rows {
-            if let count = try? row.decode(Int.self, context: .default) {
-                return count
+            for try await row in rows {
+                if let count = try? row.decode(Int.self, context: .default) {
+                    return count
+                }
             }
-        }
 
-        return 0
+            return 0
+        }
     }
 
     func fetchTableData(
@@ -225,10 +321,6 @@ actor PostgresService {
         sortColumn: String? = nil,
         sortAscending: Bool = true
     ) async throws -> [[CellValue]] {
-        guard let connection = connections[configId] else {
-            throw PostgresError.notConnected
-        }
-
         let offset = (page - 1) * pageSize
         let columnList = columns.map { "\"\($0.name)\"" }.joined(separator: ", ")
 
@@ -245,82 +337,80 @@ actor PostgresService {
         sql += "\nLIMIT \(pageSize) OFFSET \(offset)"
         logSQL(sql)
 
-        let query = PostgresQuery(unsafeSQL: sql)
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let rows = try await connection.query(query, logger: self.logger)
+            var result: [[CellValue]] = []
 
-        let rows = try await connection.query(query, logger: logger)
-        var result: [[CellValue]] = []
+            for try await row in rows {
+                var rowValues: [CellValue] = []
+                let randomAccessRow = row.makeRandomAccess()
 
-        for try await row in rows {
-            var rowValues: [CellValue] = []
-            let randomAccessRow = row.makeRandomAccess()
-
-            for (index, column) in columns.enumerated() {
-                if index < randomAccessRow.count {
-                    let cellValue = try decodeCell(from: randomAccessRow, at: index, dataType: column.dataType)
-                    rowValues.append(cellValue)
-                } else {
-                    rowValues.append(.null)
+                for (index, column) in columns.enumerated() {
+                    if index < randomAccessRow.count {
+                        let cellValue = try self.decodeCell(from: randomAccessRow, at: index, dataType: column.dataType)
+                        rowValues.append(cellValue)
+                    } else {
+                        rowValues.append(.null)
+                    }
                 }
+
+                result.append(rowValues)
             }
 
-            result.append(rowValues)
+            return result
         }
-
-        return result
     }
 
     func executeQuery(configId: UUID, sql: String) async throws -> (columns: [ColumnInfo], rows: [[CellValue]]) {
-        guard let connection = connections[configId] else {
-            throw PostgresError.notConnected
-        }
-
         logSQL(sql)
-        let query = PostgresQuery(unsafeSQL: sql)
-        let rowSequence = try await connection.query(query, logger: logger)
 
-        var columns: [ColumnInfo] = []
-        var resultRows: [[CellValue]] = []
-        var columnsExtracted = false
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let rowSequence = try await connection.query(query, logger: self.logger)
 
-        for try await row in rowSequence {
-            let randomAccessRow = row.makeRandomAccess()
+            var columns: [ColumnInfo] = []
+            var resultRows: [[CellValue]] = []
+            var columnsExtracted = false
 
-            if !columnsExtracted {
-                for index in 0..<randomAccessRow.count {
-                    columns.append(ColumnInfo(
-                        name: "column_\(index)",
-                        dataType: "text",
-                        isNullable: true,
-                        isPrimaryKey: false,
-                        ordinalPosition: index
-                    ))
+            for try await row in rowSequence {
+                let randomAccessRow = row.makeRandomAccess()
+
+                if !columnsExtracted {
+                    for index in 0..<randomAccessRow.count {
+                        columns.append(ColumnInfo(
+                            name: "column_\(index)",
+                            dataType: "text",
+                            isNullable: true,
+                            isPrimaryKey: false,
+                            ordinalPosition: index
+                        ))
+                    }
+                    columnsExtracted = true
                 }
-                columnsExtracted = true
+
+                var rowValues: [CellValue] = []
+
+                for index in 0..<randomAccessRow.count {
+                    let cellValue = try self.decodeCell(from: randomAccessRow, at: index, dataType: "text")
+                    rowValues.append(cellValue)
+                }
+
+                resultRows.append(rowValues)
             }
 
-            var rowValues: [CellValue] = []
-
-            for index in 0..<randomAccessRow.count {
-                let cellValue = try decodeCell(from: randomAccessRow, at: index, dataType: "text")
-                rowValues.append(cellValue)
-            }
-
-            resultRows.append(rowValues)
+            return (columns, resultRows)
         }
-
-        return (columns, resultRows)
     }
 
     func executeUpdate(configId: UUID, sql: String) async throws -> Int {
-        guard let connection = connections[configId] else {
-            throw PostgresError.notConnected
-        }
-
         logSQL(sql)
-        let query = PostgresQuery(unsafeSQL: sql)
-        let _ = try await connection.query(query, logger: logger)
 
-        return 1
+        return try await executeWithReconnect(configId: configId) { connection in
+            let query = PostgresQuery(unsafeSQL: sql)
+            let _ = try await connection.query(query, logger: self.logger)
+            return 1
+        }
     }
 
     private func decodeCell(from row: PostgresRandomAccessRow, at index: Int, dataType: String) throws -> CellValue {
