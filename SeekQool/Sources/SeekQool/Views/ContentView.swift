@@ -51,10 +51,10 @@ struct MainContentArea: View {
             switch selectedTab.type {
             case .tableView(let table):
                 TableDataView(
-                    dataViewModel: TableDataViewModel(
+                    dataViewModel: viewModel.tableDataViewModel(
+                        for: selectedTab,
                         connection: connection,
-                        table: table,
-                        postgresService: viewModel.postgresService
+                        table: table
                     )
                 )
                 .id(selectedTab.id)

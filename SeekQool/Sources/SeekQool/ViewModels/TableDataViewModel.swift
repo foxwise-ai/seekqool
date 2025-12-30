@@ -1,6 +1,15 @@
 import Foundation
 import SwiftUI
 
+enum SortDirection {
+    case ascending
+    case descending
+
+    var toggled: SortDirection {
+        self == .ascending ? .descending : .ascending
+    }
+}
+
 @MainActor
 class TableDataViewModel: ObservableObject {
     @Published var tableData: TableData = TableData()
@@ -10,9 +19,17 @@ class TableDataViewModel: ObservableObject {
     @Published var showSQLPreview: Bool = false
     @Published var queryInfo: QueryInfo?
 
+    // Sorting
+    @Published var sortColumnIndex: Int? = nil
+    @Published var sortDirection: SortDirection = .ascending
+
     let connectionConfig: ConnectionConfig
     let tableInfo: TableInfo?
     let postgresService: PostgresService
+
+    // For syncing state with TabManager
+    private weak var tabManager: TabManager?
+    private var tabId: UUID?
 
     var customQuery: String?
 
@@ -20,11 +37,15 @@ class TableDataViewModel: ObservableObject {
         connection: ConnectionConfig,
         table: TableInfo?,
         postgresService: PostgresService,
+        tabManager: TabManager? = nil,
+        tabId: UUID? = nil,
         customQuery: String? = nil
     ) {
         self.connectionConfig = connection
         self.tableInfo = table
         self.postgresService = postgresService
+        self.tabManager = tabManager
+        self.tabId = tabId
         self.customQuery = customQuery
     }
 
@@ -89,7 +110,9 @@ class TableDataViewModel: ObservableObject {
                 table: table.name,
                 columns: columns,
                 page: tableData.currentPage,
-                pageSize: tableData.pageSize
+                pageSize: tableData.pageSize,
+                sortColumn: sortColumnName,
+                sortAscending: sortDirection == .ascending
             )
 
             let pkColumns = columns.filter { $0.isPrimaryKey }.map { $0.name }
@@ -264,5 +287,41 @@ class TableDataViewModel: ObservableObject {
 
     func isCellModified(rowIndex: Int, columnIndex: Int) -> Bool {
         pendingChanges.editForCell(rowIndex: rowIndex, columnIndex: columnIndex) != nil
+    }
+
+    // MARK: - Sorting
+
+    var sortColumnName: String? {
+        guard let index = sortColumnIndex, index < tableData.columns.count else {
+            return nil
+        }
+        return tableData.columns[index].name
+    }
+
+    func toggleSort(columnIndex: Int) {
+        if sortColumnIndex == columnIndex {
+            sortDirection = sortDirection.toggled
+        } else {
+            sortColumnIndex = columnIndex
+            sortDirection = .ascending
+        }
+        syncSortToTabManager()
+        Task {
+            await loadData()
+        }
+    }
+
+    func clearSort() {
+        sortColumnIndex = nil
+        sortDirection = .ascending
+        syncSortToTabManager()
+        Task {
+            await loadData()
+        }
+    }
+
+    private func syncSortToTabManager() {
+        guard let tabManager = tabManager, let tabId = tabId else { return }
+        tabManager.updateTabSort(tabId, columnIndex: sortColumnIndex, ascending: sortDirection == .ascending)
     }
 }

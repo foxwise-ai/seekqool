@@ -16,6 +16,11 @@ actor PostgresService {
         self.logger = logger
     }
 
+    private func logSQL(_ sql: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        print("[\(timestamp)] SQL: \(sql)")
+    }
+
     deinit {
         try? eventLoopGroup.syncShutdownGracefully()
     }
@@ -60,14 +65,14 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
 
-        let query = PostgresQuery(
-            unsafeSQL: """
+        let sql = """
             SELECT datname FROM pg_database
             WHERE datistemplate = false
             ORDER BY datname
             """
-        )
+        logSQL(sql)
 
+        let query = PostgresQuery(unsafeSQL: sql)
         let rows = try await connection.query(query, logger: logger)
         var databases: [DatabaseInfo] = []
 
@@ -85,14 +90,14 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
 
-        let query = PostgresQuery(
-            unsafeSQL: """
+        let sql = """
             SELECT schema_name FROM information_schema.schemata
             WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
             ORDER BY schema_name
             """
-        )
+        logSQL(sql)
 
+        let query = PostgresQuery(unsafeSQL: sql)
         let rows = try await connection.query(query, logger: logger)
         var schemas: [SchemaInfo] = []
 
@@ -110,15 +115,15 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
 
-        let query = PostgresQuery(
-            unsafeSQL: """
+        let sql = """
             SELECT table_schema, table_name, table_type
             FROM information_schema.tables
             WHERE table_schema = '\(schema)'
             ORDER BY table_type, table_name
             """
-        )
+        logSQL(sql)
 
+        let query = PostgresQuery(unsafeSQL: sql)
         let rows = try await connection.query(query, logger: logger)
         var tables: [TableInfo] = []
 
@@ -141,8 +146,7 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
 
-        let query = PostgresQuery(
-            unsafeSQL: """
+        let sql = """
             SELECT
                 c.column_name,
                 c.data_type,
@@ -163,8 +167,9 @@ actor PostgresService {
             WHERE c.table_schema = '\(schema)' AND c.table_name = '\(table)'
             ORDER BY c.ordinal_position
             """
-        )
+        logSQL(sql)
 
+        let query = PostgresQuery(unsafeSQL: sql)
         let rows = try await connection.query(query, logger: logger)
         var columns: [ColumnInfo] = []
 
@@ -195,10 +200,10 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
 
-        let query = PostgresQuery(
-            unsafeSQL: "SELECT COUNT(*) FROM \"\(schema)\".\"\(table)\""
-        )
+        let sql = "SELECT COUNT(*) FROM \"\(schema)\".\"\(table)\""
+        logSQL(sql)
 
+        let query = PostgresQuery(unsafeSQL: sql)
         let rows = try await connection.query(query, logger: logger)
 
         for try await row in rows {
@@ -216,7 +221,9 @@ actor PostgresService {
         table: String,
         columns: [ColumnInfo],
         page: Int,
-        pageSize: Int
+        pageSize: Int,
+        sortColumn: String? = nil,
+        sortAscending: Bool = true
     ) async throws -> [[CellValue]] {
         guard let connection = connections[configId] else {
             throw PostgresError.notConnected
@@ -225,13 +232,20 @@ actor PostgresService {
         let offset = (page - 1) * pageSize
         let columnList = columns.map { "\"\($0.name)\"" }.joined(separator: ", ")
 
-        let query = PostgresQuery(
-            unsafeSQL: """
+        var sql = """
             SELECT \(columnList)
             FROM "\(schema)"."\(table)"
-            LIMIT \(pageSize) OFFSET \(offset)
             """
-        )
+
+        if let sortCol = sortColumn {
+            let direction = sortAscending ? "ASC" : "DESC"
+            sql += "\nORDER BY \"\(sortCol)\" \(direction) NULLS LAST"
+        }
+
+        sql += "\nLIMIT \(pageSize) OFFSET \(offset)"
+        logSQL(sql)
+
+        let query = PostgresQuery(unsafeSQL: sql)
 
         let rows = try await connection.query(query, logger: logger)
         var result: [[CellValue]] = []
@@ -260,6 +274,7 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
 
+        logSQL(sql)
         let query = PostgresQuery(unsafeSQL: sql)
         let rowSequence = try await connection.query(query, logger: logger)
 
@@ -301,6 +316,7 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
 
+        logSQL(sql)
         let query = PostgresQuery(unsafeSQL: sql)
         let _ = try await connection.query(query, logger: logger)
 
@@ -315,6 +331,51 @@ actor PostgresService {
         }
 
         let lowerType = dataType.lowercased()
+
+        // Handle bigint (int8) - PostgreSQL sends as 8-byte binary
+        if lowerType == "bigint" || lowerType == "int8" || lowerType == "bigserial" {
+            if bytes.readableBytes == 8 {
+                if let value = bytes.readInteger(as: Int64.self) {
+                    return .int(Int(value))
+                }
+            }
+            // Fallback to string parsing
+            let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
+            if let intVal = Int(stringValue) {
+                return .int(intVal)
+            }
+            return .string(stringValue)
+        }
+
+        // Handle integer (int4) - PostgreSQL sends as 4-byte binary
+        if lowerType == "integer" || lowerType == "int" || lowerType == "int4" || lowerType == "serial" {
+            if bytes.readableBytes == 4 {
+                if let value = bytes.readInteger(as: Int32.self) {
+                    return .int(Int(value))
+                }
+            }
+            // Fallback to string parsing
+            let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
+            if let intVal = Int(stringValue) {
+                return .int(intVal)
+            }
+            return .string(stringValue)
+        }
+
+        // Handle smallint (int2) - PostgreSQL sends as 2-byte binary
+        if lowerType == "smallint" || lowerType == "int2" || lowerType == "smallserial" {
+            if bytes.readableBytes == 2 {
+                if let value = bytes.readInteger(as: Int16.self) {
+                    return .int(Int(value))
+                }
+            }
+            // Fallback to string parsing
+            let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
+            if let intVal = Int(stringValue) {
+                return .int(intVal)
+            }
+            return .string(stringValue)
+        }
 
         // Handle timestamps - PostgreSQL sends as binary (microseconds since 2000-01-01)
         if lowerType.contains("timestamp") || lowerType == "timestamptz" {
@@ -354,22 +415,45 @@ actor PostgresService {
             }
         }
 
-        let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
+        // Handle boolean - PostgreSQL sends as 1-byte binary
+        if lowerType == "boolean" || lowerType == "bool" {
+            if bytes.readableBytes == 1 {
+                if let value = bytes.readInteger(as: UInt8.self) {
+                    return .bool(value != 0)
+                }
+            }
+            let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
+            return .bool(stringValue == "t" || stringValue == "true" || stringValue == "1")
+        }
 
-        if lowerType.contains("int") || lowerType == "serial" || lowerType == "bigserial" {
-            if let intVal = Int(stringValue) {
-                return .int(intVal)
+        // Handle float4 (real) - 4-byte binary
+        if lowerType == "real" || lowerType == "float4" {
+            if bytes.readableBytes == 4 {
+                if let bits = bytes.readInteger(as: UInt32.self) {
+                    let value = Float(bitPattern: bits)
+                    return .double(Double(value))
+                }
             }
         }
 
-        if lowerType.contains("float") || lowerType.contains("double") || lowerType == "real" || lowerType == "numeric" || lowerType == "decimal" {
+        // Handle float8 (double precision) - 8-byte binary
+        if lowerType == "double precision" || lowerType == "float8" {
+            if bytes.readableBytes == 8 {
+                if let bits = bytes.readInteger(as: UInt64.self) {
+                    let value = Double(bitPattern: bits)
+                    return .double(value)
+                }
+            }
+        }
+
+        let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
+
+        // Handle numeric/decimal as string (variable precision)
+        if lowerType == "numeric" || lowerType == "decimal" {
             if let doubleVal = Double(stringValue) {
                 return .double(doubleVal)
             }
-        }
-
-        if lowerType == "boolean" || lowerType == "bool" {
-            return .bool(stringValue == "t" || stringValue == "true" || stringValue == "1")
+            return .string(stringValue)
         }
 
         if lowerType == "uuid" {

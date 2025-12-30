@@ -135,24 +135,40 @@ struct TableDataView: View {
                 .background(Color(NSColor.controlBackgroundColor))
 
             ForEach(Array(dataViewModel.tableData.columns.enumerated()), id: \.element.id) { index, column in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        if column.isPrimaryKey {
-                            Image(systemName: "key.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(.yellow)
+                let isSorted = dataViewModel.sortColumnIndex == index
+
+                HStack(spacing: 4) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            if column.isPrimaryKey {
+                                Image(systemName: "key.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.yellow)
+                            }
+                            Text(column.name)
+                                .fontWeight(.semibold)
                         }
-                        Text(column.name)
-                            .fontWeight(.semibold)
+                        Text(column.dataType)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
-                    Text(column.dataType)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+
+                    Spacer()
+
+                    if isSorted {
+                        Image(systemName: dataViewModel.sortDirection == .ascending ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.accentColor)
+                    }
                 }
                 .frame(width: columnWidth(for: column), alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .background(Color(NSColor.controlBackgroundColor))
+                .background(isSorted ? Color.accentColor.opacity(0.1) : Color(NSColor.controlBackgroundColor))
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    dataViewModel.toggleSort(columnIndex: index)
+                }
 
                 if index < dataViewModel.tableData.columns.count - 1 {
                     Divider()
@@ -277,6 +293,30 @@ struct TableDataView: View {
             Text("\(dataViewModel.tableData.totalRowCount) total rows")
                 .font(.caption)
                 .foregroundColor(.secondary)
+
+            if let sortCol = dataViewModel.sortColumnIndex,
+               sortCol < dataViewModel.tableData.columns.count {
+                let colName = dataViewModel.tableData.columns[sortCol].name
+                let direction = dataViewModel.sortDirection == .ascending ? "↑" : "↓"
+
+                HStack(spacing: 4) {
+                    Text("Sorted by \(colName) \(direction)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Button(action: { dataViewModel.clearSort() }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear sort")
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Color.accentColor.opacity(0.1))
+                .cornerRadius(4)
+            }
 
             Spacer()
 

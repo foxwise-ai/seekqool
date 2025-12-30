@@ -14,6 +14,9 @@ class AppViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError: Bool = false
 
+    // Cache for TableDataViewModels by tab ID
+    private var tableViewModelCache: [UUID: TableDataViewModel] = [:]
+
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -44,6 +47,8 @@ class AppViewModel: ObservableObject {
             if success {
                 connectionStore.setActive(config.id, active: true)
                 await loadSchemas(for: config.id)
+                // Restore previous session state
+                tabManager.restoreState(for: config.id)
             }
         } catch {
             errorMessage = "Failed to connect: \(error.localizedDescription)"
@@ -58,7 +63,41 @@ class AppViewModel: ObservableObject {
         connectionStore.setActive(config.id, active: false)
         schemas.removeValue(forKey: config.id)
         tables.removeValue(forKey: config.id)
+        // Clear cached view models for this connection
+        let tabsToRemove = tabManager.tabs.filter { $0.connectionId == config.id }.map { $0.id }
+        for tabId in tabsToRemove {
+            tableViewModelCache.removeValue(forKey: tabId)
+        }
         tabManager.closeAllTabs(forConnection: config.id)
+    }
+
+    // MARK: - ViewModel Cache
+
+    func tableDataViewModel(for tab: AppTab, connection: ConnectionConfig, table: TableInfo) -> TableDataViewModel {
+        if let cached = tableViewModelCache[tab.id] {
+            return cached
+        }
+
+        let viewModel = TableDataViewModel(
+            connection: connection,
+            table: table,
+            postgresService: postgresService,
+            tabManager: tabManager,
+            tabId: tab.id
+        )
+
+        // Restore sort state from tab
+        if let sortCol = tab.sortColumnIndex {
+            viewModel.sortColumnIndex = sortCol
+            viewModel.sortDirection = tab.sortAscending ? .ascending : .descending
+        }
+
+        tableViewModelCache[tab.id] = viewModel
+        return viewModel
+    }
+
+    func clearViewModelCache(for tabId: UUID) {
+        tableViewModelCache.removeValue(forKey: tabId)
     }
 
     func loadSchemas(for connectionId: UUID) async {
