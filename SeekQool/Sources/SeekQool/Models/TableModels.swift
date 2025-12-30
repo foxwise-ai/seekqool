@@ -88,7 +88,9 @@ enum CellValue: Hashable, CustomStringConvertible {
         case .bool(let b):
             return b ? "true" : "false"
         case .date(let d):
-            let formatter = ISO8601DateFormatter()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            formatter.timeZone = TimeZone.current
             return formatter.string(from: d)
         case .data(let data):
             return "\\x" + data.map { String(format: "%02x", $0) }.joined()

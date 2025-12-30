@@ -310,13 +310,51 @@ actor PostgresService {
     private func decodeCell(from row: PostgresRandomAccessRow, at index: Int, dataType: String) throws -> CellValue {
         let cell = row[index]
 
-        guard let bytes = cell.bytes else {
+        guard var bytes = cell.bytes else {
             return .null
         }
 
-        let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
-
         let lowerType = dataType.lowercased()
+
+        // Handle timestamps - PostgreSQL sends as binary (microseconds since 2000-01-01)
+        if lowerType.contains("timestamp") || lowerType == "timestamptz" {
+            if bytes.readableBytes == 8 {
+                let microseconds = bytes.readInteger(as: Int64.self) ?? 0
+                // PostgreSQL epoch is 2000-01-01, Unix epoch is 1970-01-01
+                // Difference is 946684800 seconds
+                let unixTimestamp = Double(microseconds) / 1_000_000.0 + 946684800.0
+                let date = Date(timeIntervalSince1970: unixTimestamp)
+                return .date(date)
+            }
+            // Fallback to string if not 8 bytes
+            let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
+            return .string(stringValue)
+        }
+
+        // Handle date type
+        if lowerType == "date" {
+            if bytes.readableBytes == 4 {
+                let days = bytes.readInteger(as: Int32.self) ?? 0
+                // Days since 2000-01-01
+                let unixTimestamp = Double(days) * 86400.0 + 946684800.0
+                let date = Date(timeIntervalSince1970: unixTimestamp)
+                return .date(date)
+            }
+        }
+
+        // Handle time type
+        if lowerType.contains("time") && !lowerType.contains("timestamp") {
+            if bytes.readableBytes == 8 {
+                let microseconds = bytes.readInteger(as: Int64.self) ?? 0
+                let seconds = Double(microseconds) / 1_000_000.0
+                let hours = Int(seconds / 3600)
+                let minutes = Int((seconds.truncatingRemainder(dividingBy: 3600)) / 60)
+                let secs = Int(seconds.truncatingRemainder(dividingBy: 60))
+                return .string(String(format: "%02d:%02d:%02d", hours, minutes, secs))
+            }
+        }
+
+        let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
 
         if lowerType.contains("int") || lowerType == "serial" || lowerType == "bigserial" {
             if let intVal = Int(stringValue) {
