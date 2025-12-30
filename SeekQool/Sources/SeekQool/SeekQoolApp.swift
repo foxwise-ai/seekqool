@@ -6,44 +6,6 @@ struct SeekQoolApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .frame(minWidth: 900, minHeight: 600)
-        }
-        .windowStyle(.automatic)
-        .windowToolbarStyle(.unified)
-        .defaultSize(width: 1200, height: 800)
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("New Query Tab") {
-                    NotificationCenter.default.post(name: .newQueryTab, object: nil)
-                }
-                .keyboardShortcut("t", modifiers: .command)
-            }
-
-            CommandGroup(after: .newItem) {
-                Divider()
-                Button("Close Tab") {
-                    NotificationCenter.default.post(name: .closeCurrentTab, object: nil)
-                }
-                .keyboardShortcut("w", modifiers: .command)
-            }
-
-            CommandMenu("Database") {
-                Button("New Connection...") {
-                    NotificationCenter.default.post(name: .newConnection, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
-
-                Divider()
-
-                Button("Refresh") {
-                    NotificationCenter.default.post(name: .refreshCurrentTab, object: nil)
-                }
-                .keyboardShortcut("r", modifiers: .command)
-            }
-        }
-
         Settings {
             SettingsView()
         }
@@ -51,26 +13,42 @@ struct SeekQoolApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    var window: NSWindow!
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // CRITICAL: Set as regular app so it can receive keyboard input
+        NSApp.setActivationPolicy(.regular)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Ensure the app activates properly
+        let contentView = ContentView()
+
+        window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+
+        window.center()
+        window.setFrameAutosaveName("MainWindow")
+        window.contentView = NSHostingView(rootView: contentView)
+        window.title = "SeekQool"
+        window.minSize = NSSize(width: 900, height: 600)
+
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            // Reopen window if all windows were closed
-            for window in sender.windows {
-                window.makeKeyAndOrderFront(self)
-            }
-        }
-        return true
-    }
-
-    func applicationDidBecomeActive(_ notification: Notification) {
-        // Make sure main window comes to front
-        if let window = NSApp.windows.first(where: { $0.isVisible }) {
             window.makeKeyAndOrderFront(nil)
         }
+        return true
     }
 }
 

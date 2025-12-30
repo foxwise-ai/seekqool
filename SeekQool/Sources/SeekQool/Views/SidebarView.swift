@@ -2,8 +2,6 @@ import SwiftUI
 
 struct SidebarView: View {
     @ObservedObject var viewModel: AppViewModel
-    @State private var showAddConnection = false
-    @State private var editingConnection: ConnectionConfig?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -11,8 +9,7 @@ struct SidebarView: View {
                 ForEach(viewModel.connectionStore.connections) { connection in
                     ConnectionItemView(
                         connection: connection,
-                        viewModel: viewModel,
-                        onEdit: { editingConnection = connection }
+                        viewModel: viewModel
                     )
                 }
             }
@@ -21,7 +18,12 @@ struct SidebarView: View {
             Divider()
 
             HStack {
-                Button(action: { showAddConnection = true }) {
+                Button(action: {
+                    ConnectionWindowController.shared.showConnectionForm(
+                        connectionStore: viewModel.connectionStore,
+                        postgresService: viewModel.postgresService
+                    )
+                }) {
                     Label("Add Connection", systemImage: "plus")
                 }
                 .buttonStyle(.borderless)
@@ -31,27 +33,12 @@ struct SidebarView: View {
             .padding(8)
         }
         .frame(minWidth: 220)
-        .sheet(isPresented: $showAddConnection) {
-            ConnectionFormView(
-                connectionStore: viewModel.connectionStore,
-                postgresService: viewModel.postgresService,
-                existingConnection: nil
-            )
-        }
-        .sheet(item: $editingConnection) { connection in
-            ConnectionFormView(
-                connectionStore: viewModel.connectionStore,
-                postgresService: viewModel.postgresService,
-                existingConnection: connection
-            )
-        }
     }
 }
 
 struct ConnectionItemView: View {
     let connection: ConnectionConfig
     @ObservedObject var viewModel: AppViewModel
-    let onEdit: () -> Void
 
     @State private var isExpanded = true
     @State private var isHovering = false
@@ -166,7 +153,11 @@ struct ConnectionItemView: View {
         Divider()
 
         Button("Edit Connection") {
-            onEdit()
+            ConnectionWindowController.shared.showConnectionForm(
+                connectionStore: viewModel.connectionStore,
+                postgresService: viewModel.postgresService,
+                existingConnection: connection
+            )
         }
 
         Button("Remove Connection", role: .destructive) {
