@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @MainActor
 class AppViewModel: ObservableObject {
@@ -13,10 +14,25 @@ class AppViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError: Bool = false
 
+    private var cancellables = Set<AnyCancellable>()
+
     init() {
         self.connectionStore = ConnectionStore()
         self.tabManager = TabManager()
         self.postgresService = PostgresService()
+
+        // Forward child object changes to trigger SwiftUI updates
+        tabManager.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        connectionStore.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
 
     func connect(to config: ConnectionConfig) async {

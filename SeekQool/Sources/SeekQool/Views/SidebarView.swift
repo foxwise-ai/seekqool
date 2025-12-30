@@ -205,19 +205,16 @@ struct TableItemView: View {
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        Button(action: {
-            viewModel.openTable(table, connection: connection)
-        }) {
-            HStack(spacing: 6) {
-                Image(systemName: table.type == .view ? "eye" : "tablecells")
-                    .foregroundColor(table.type == .view ? .purple : .orange)
-                Text(table.name)
-                    .foregroundColor(.primary)
-                Spacer()
-            }
-            .contentShape(Rectangle())
+        HStack(spacing: 6) {
+            Image(systemName: table.type == .view ? "eye" : "tablecells")
+                .foregroundColor(table.type == .view ? .purple : .orange)
+            Text(table.name)
+            Spacer()
         }
-        .buttonStyle(.borderless)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            viewModel.openTable(table, connection: connection)
+        }
         .contextMenu {
             Button("Open in New Tab") {
                 viewModel.openTable(table, connection: connection)

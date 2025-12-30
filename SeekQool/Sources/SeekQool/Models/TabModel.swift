@@ -42,6 +42,7 @@ struct AppTab: Identifiable, Hashable {
     }
 }
 
+@MainActor
 class TabManager: ObservableObject {
     @Published var tabs: [AppTab] = []
     @Published var selectedTabId: UUID?

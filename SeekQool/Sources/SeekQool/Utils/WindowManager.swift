@@ -320,10 +320,13 @@ struct ConnectionFormView: View {
             iconName: selectedIcon, iconColor: selectedColor
         )
 
-        if isEditing {
-            connectionStore.updateConnection(config)
-        } else {
-            connectionStore.addConnection(config)
+        // Ensure we're on main actor for ObservableObject updates
+        Task { @MainActor in
+            if isEditing {
+                connectionStore.updateConnection(config)
+            } else {
+                connectionStore.addConnection(config)
+            }
         }
         onDismiss()
     }
