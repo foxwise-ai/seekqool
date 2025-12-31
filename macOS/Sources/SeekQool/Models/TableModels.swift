@@ -33,6 +33,7 @@ struct ColumnInfo: Identifiable, Hashable {
     let isNullable: Bool
     let isPrimaryKey: Bool
     let ordinalPosition: Int
+    var isHidden: Bool = false
 }
 
 struct TableData {
@@ -45,6 +46,18 @@ struct TableData {
 
     var totalPages: Int {
         max(1, (totalRowCount + pageSize - 1) / pageSize)
+    }
+
+    var visibleColumns: [ColumnInfo] {
+        columns.filter { !$0.isHidden }
+    }
+
+    var visibleColumnIndices: [Int] {
+        columns.enumerated().compactMap { $0.element.isHidden ? nil : $0.offset }
+    }
+
+    func visibleCells(for row: [CellValue]) -> [CellValue] {
+        visibleColumnIndices.map { row[$0] }
     }
 
     init(

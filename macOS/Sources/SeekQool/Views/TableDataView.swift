@@ -137,8 +137,10 @@ struct TableDataView: View {
                 .padding(.vertical, 8)
                 .background(Color(NSColor.controlBackgroundColor))
 
-            ForEach(Array(dataViewModel.tableData.columns.enumerated()), id: \.element.id) { index, column in
-                let isSorted = dataViewModel.sortColumnIndex == index
+            let visibleIndices = dataViewModel.tableData.visibleColumnIndices
+            ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualIndex in
+                let column = dataViewModel.tableData.columns[actualIndex]
+                let isSorted = dataViewModel.sortColumnIndex == actualIndex
 
                 HStack(spacing: 4) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -170,10 +172,10 @@ struct TableDataView: View {
                 .background(isSorted ? Color.accentColor.opacity(0.1) : Color(NSColor.controlBackgroundColor))
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    dataViewModel.toggleSort(columnIndex: index)
+                    dataViewModel.toggleSort(columnIndex: actualIndex)
                 }
 
-                if index < dataViewModel.tableData.columns.count - 1 {
+                if visibleIndex < visibleIndices.count - 1 {
                     Divider()
                 }
             }
@@ -189,15 +191,17 @@ struct TableDataView: View {
                 .padding(.vertical, 6)
                 .background(rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3))
 
-            ForEach(Array(row.enumerated()), id: \.offset) { colIndex, cellValue in
-                let column = dataViewModel.tableData.columns[colIndex]
-                let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: colIndex)
-                let isEditing = editingCell?.row == rowIndex && editingCell?.col == colIndex
+            let visibleIndices = dataViewModel.tableData.visibleColumnIndices
+            ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualColIndex in
+                let column = dataViewModel.tableData.columns[actualColIndex]
+                let cellValue = row[actualColIndex]
+                let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: actualColIndex)
+                let isEditing = editingCell?.row == rowIndex && editingCell?.col == actualColIndex
 
                 Group {
                     if isEditing && dataViewModel.isEditable {
                         TextField("", text: $editText, onCommit: {
-                            commitEdit(rowIndex: rowIndex, colIndex: colIndex)
+                            commitEdit(rowIndex: rowIndex, colIndex: actualColIndex)
                         })
                         .textFieldStyle(.plain)
                         .onExitCommand {
@@ -216,18 +220,18 @@ struct TableDataView: View {
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
                     if dataViewModel.isEditable {
-                        startEditing(rowIndex: rowIndex, colIndex: colIndex, value: cellValue)
+                        startEditing(rowIndex: rowIndex, colIndex: actualColIndex, value: cellValue)
                     }
                 }
                 .contextMenu {
                     if dataViewModel.isEditable {
                         Button("Edit") {
-                            startEditing(rowIndex: rowIndex, colIndex: colIndex, value: cellValue)
+                            startEditing(rowIndex: rowIndex, colIndex: actualColIndex, value: cellValue)
                         }
                         Button("Set to NULL") {
-                            dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: colIndex, newValue: "NULL")
+                            dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: actualColIndex, newValue: "NULL")
                         }
-                        if isModified, let edit = dataViewModel.pendingChanges.editForCell(rowIndex: rowIndex, columnIndex: colIndex) {
+                        if isModified, let edit = dataViewModel.pendingChanges.editForCell(rowIndex: rowIndex, columnIndex: actualColIndex) {
                             Divider()
                             Button("Rollback This Cell") {
                                 dataViewModel.rollbackEdit(edit)
@@ -240,7 +244,7 @@ struct TableDataView: View {
                     }
                 }
 
-                if colIndex < row.count - 1 {
+                if visibleIndex < visibleIndices.count - 1 {
                     Divider()
                 }
             }

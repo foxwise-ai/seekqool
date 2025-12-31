@@ -421,52 +421,124 @@ actor PostgresService {
     func executeQuery(configId: UUID, sql: String) async throws -> (columns: [ColumnInfo], rows: [[CellValue]]) {
         logSQL(sql)
 
-        return try await executeWithReconnect(configId: configId) { connection in
-            let query = PostgresQuery(unsafeSQL: sql)
-            let rowSequence = try await connection.query(query, logger: self.logger)
+        do {
+            return try await executeWithReconnect(configId: configId) { connection in
+                let query = PostgresQuery(unsafeSQL: sql)
+                let rowSequence = try await connection.query(query, logger: self.logger)
 
-            var columns: [ColumnInfo] = []
-            var resultRows: [[CellValue]] = []
-            var columnsExtracted = false
+                var columns: [ColumnInfo] = []
+                var resultRows: [[CellValue]] = []
+                var columnsExtracted = false
 
-            for try await row in rowSequence {
-                let randomAccessRow = row.makeRandomAccess()
+                for try await row in rowSequence {
+                    let randomAccessRow = row.makeRandomAccess()
 
-                if !columnsExtracted {
-                    for index in 0..<randomAccessRow.count {
-                        columns.append(ColumnInfo(
-                            name: "column_\(index)",
-                            dataType: "text",
-                            isNullable: true,
-                            isPrimaryKey: false,
-                            ordinalPosition: index
-                        ))
+                    if !columnsExtracted {
+                        // Extract actual column names from the row description
+                        for index in 0..<randomAccessRow.count {
+                            let columnName = randomAccessRow[index].columnName
+                            let dataType = String(describing: randomAccessRow[index].dataType)
+                            columns.append(ColumnInfo(
+                                name: columnName,
+                                dataType: dataType,
+                                isNullable: true,
+                                isPrimaryKey: false,
+                                ordinalPosition: index
+                            ))
+                        }
+                        columnsExtracted = true
                     }
-                    columnsExtracted = true
+
+                    var rowValues: [CellValue] = []
+
+                    for index in 0..<randomAccessRow.count {
+                        let dataType = columns[index].dataType
+                        let cellValue = try self.decodeCell(from: randomAccessRow, at: index, dataType: dataType)
+                        rowValues.append(cellValue)
+                    }
+
+                    resultRows.append(rowValues)
                 }
 
-                var rowValues: [CellValue] = []
-
-                for index in 0..<randomAccessRow.count {
-                    let cellValue = try self.decodeCell(from: randomAccessRow, at: index, dataType: "text")
-                    rowValues.append(cellValue)
-                }
-
-                resultRows.append(rowValues)
+                return (columns, resultRows)
             }
-
-            return (columns, resultRows)
+        } catch let error as PSQLError {
+            let message = extractPSQLErrorMessage(error)
+            log("SQL Error: \(message)")
+            throw PostgresError.queryFailed(message)
+        } catch let error as PostgresError {
+            throw error
+        } catch {
+            let message = String(describing: error)
+            log("SQL Error: \(message)")
+            throw PostgresError.queryFailed(message)
         }
     }
 
     func executeUpdate(configId: UUID, sql: String) async throws -> Int {
         logSQL(sql)
 
-        return try await executeWithReconnect(configId: configId) { connection in
-            let query = PostgresQuery(unsafeSQL: sql)
-            let _ = try await connection.query(query, logger: self.logger)
-            return 1
+        do {
+            return try await executeWithReconnect(configId: configId) { connection in
+                let query = PostgresQuery(unsafeSQL: sql)
+                let _ = try await connection.query(query, logger: self.logger)
+                return 1
+            }
+        } catch let error as PSQLError {
+            // Extract detailed error message from PostgreSQL
+            let message = extractPSQLErrorMessage(error)
+            log("SQL Error: \(message)")
+            throw PostgresError.queryFailed(message)
+        } catch let error as PostgresError {
+            // Re-throw our own errors
+            throw error
+        } catch {
+            // Handle any other errors
+            let message = String(describing: error)
+            log("SQL Error: \(message)")
+            throw PostgresError.queryFailed(message)
         }
+    }
+
+    private nonisolated func extractPSQLErrorMessage(_ error: PSQLError) -> String {
+        // Use String(reflecting:) as recommended by PostgresNIO for debugging details
+        let fullDescription = String(reflecting: error)
+
+        // Try to extract the actual PostgreSQL error message
+        // Look for patterns like: message: "actual error message"
+        if let messageRange = fullDescription.range(of: "message: \"") {
+            let start = messageRange.upperBound
+            if let endRange = fullDescription[start...].range(of: "\"") {
+                let message = String(fullDescription[start..<endRange.lowerBound])
+                if !message.isEmpty {
+                    return message
+                }
+            }
+        }
+
+        // Try to find "detail:" for additional context
+        var detail = ""
+        if let detailRange = fullDescription.range(of: "detail: \"") {
+            let start = detailRange.upperBound
+            if let endRange = fullDescription[start...].range(of: "\"") {
+                detail = String(fullDescription[start..<endRange.lowerBound])
+            }
+        }
+
+        // Log full error for debugging
+        print("[PSQLError Debug] Full error: \(fullDescription)")
+
+        // Return a cleaned up version
+        if !detail.isEmpty {
+            return detail
+        }
+
+        // Last resort: return truncated full description
+        if fullDescription.count > 300 {
+            return String(fullDescription.prefix(300)) + "..."
+        }
+
+        return fullDescription.isEmpty ? "Unknown database error" : fullDescription
     }
 
     private nonisolated func decodeCell(from row: PostgresRandomAccessRow, at index: Int, dataType: String) throws -> CellValue {

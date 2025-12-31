@@ -77,16 +77,18 @@ class PendingChanges: ObservableObject {
         var sql = "-- SeekQool Generated SQL\n"
         sql += "-- \(edits.count) change(s) pending\n"
         sql += "-- Generated at: \(ISO8601DateFormatter().string(from: Date()))\n\n"
-        sql += "BEGIN;\n\n"
 
         for (index, edit) in edits.enumerated() {
             sql += "-- Change \(index + 1): Update \(edit.columnName) in row\n"
             sql += edit.generateSQL() + "\n\n"
         }
 
-        sql += "COMMIT;\n"
-
         return sql
+    }
+
+    /// Returns individual SQL statements for execution
+    func generateSQLStatements() -> [String] {
+        edits.map { $0.generateSQL() }
     }
 
     func editForCell(rowIndex: Int, columnIndex: Int) -> CellEdit? {

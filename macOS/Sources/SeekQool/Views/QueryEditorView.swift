@@ -176,17 +176,22 @@ struct QueryResultsTableView: View {
     @State private var editText: String = ""
 
     var body: some View {
-        if dataViewModel.tableData.columns.isEmpty {
-            Text("No results")
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView([.horizontal, .vertical]) {
-                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    Section(header: headerRow) {
-                        ForEach(Array(dataViewModel.tableData.rows.enumerated()), id: \.offset) { rowIndex, row in
-                            dataRow(rowIndex: rowIndex, row: row)
+        VStack(spacing: 0) {
+            if dataViewModel.tableData.columns.isEmpty {
+                Text("No results")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                GeometryReader { geometry in
+                    ScrollView([.horizontal, .vertical]) {
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            Section(header: headerRow) {
+                                ForEach(Array(dataViewModel.tableData.rows.enumerated()), id: \.offset) { rowIndex, row in
+                                    dataRow(rowIndex: rowIndex, row: row)
+                                }
+                            }
                         }
+                        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .topLeading)
                     }
                 }
             }
@@ -197,15 +202,34 @@ struct QueryResultsTableView: View {
         }
     }
 
+    func columnWidth(for column: ColumnInfo) -> CGFloat {
+        let type = column.dataType.lowercased()
+        if type.contains("text") || type.contains("varchar") || type.contains("json") {
+            return 200
+        }
+        if type.contains("uuid") {
+            return 280
+        }
+        if type.contains("timestamp") || type.contains("date") {
+            return 180
+        }
+        if type == "boolean" || type == "bool" {
+            return 80
+        }
+        return 150
+    }
+
     var headerRow: some View {
         HStack(spacing: 0) {
             Text("#")
-                .frame(width: 40, alignment: .center)
+                .frame(width: 50, alignment: .center)
                 .padding(.vertical, 6)
                 .font(.caption)
                 .background(Color(NSColor.controlBackgroundColor))
 
-            ForEach(Array(dataViewModel.tableData.columns.enumerated()), id: \.element.id) { index, column in
+            let visibleIndices = dataViewModel.tableData.visibleColumnIndices
+            ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualIndex in
+                let column = dataViewModel.tableData.columns[actualIndex]
                 VStack(alignment: .leading, spacing: 1) {
                     Text(column.name)
                         .fontWeight(.medium)
@@ -214,12 +238,12 @@ struct QueryResultsTableView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
-                .frame(width: 150, alignment: .leading)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
+                .frame(width: columnWidth(for: column), alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
                 .background(Color(NSColor.controlBackgroundColor))
 
-                if index < dataViewModel.tableData.columns.count - 1 {
+                if visibleIndex < visibleIndices.count - 1 {
                     Divider()
                 }
             }
@@ -229,19 +253,23 @@ struct QueryResultsTableView: View {
     func dataRow(rowIndex: Int, row: [CellValue]) -> some View {
         HStack(spacing: 0) {
             Text("\(rowIndex + 1)")
-                .font(.caption2)
+                .font(.caption)
                 .foregroundColor(.secondary)
-                .frame(width: 40, alignment: .center)
-                .padding(.vertical, 4)
+                .frame(width: 50, alignment: .center)
+                .padding(.vertical, 6)
+                .background(rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3))
 
-            ForEach(Array(row.enumerated()), id: \.offset) { colIndex, cellValue in
-                let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: colIndex)
-                let isEditing = editingCell?.row == rowIndex && editingCell?.col == colIndex
+            let visibleIndices = dataViewModel.tableData.visibleColumnIndices
+            ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualColIndex in
+                let column = dataViewModel.tableData.columns[actualColIndex]
+                let cellValue = row[actualColIndex]
+                let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: actualColIndex)
+                let isEditing = editingCell?.row == rowIndex && editingCell?.col == actualColIndex
 
                 Group {
                     if isEditing && dataViewModel.isEditable {
                         TextField("", text: $editText, onCommit: {
-                            dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: colIndex, newValue: editText)
+                            dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: actualColIndex, newValue: editText)
                             editingCell = nil
                         })
                         .textFieldStyle(.plain)
@@ -251,21 +279,22 @@ struct QueryResultsTableView: View {
                             .font(.caption)
                             .foregroundColor(cellValue.isNull ? .secondary : .primary)
                             .italic(cellValue.isNull)
+                            .lineLimit(1)
                     }
                 }
-                .frame(width: 150, alignment: .leading)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(isModified ? Color.orange.opacity(0.2) : Color.clear)
+                .frame(width: columnWidth(for: column), alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(isModified ? Color.orange.opacity(0.2) : (rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3)))
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
                     if dataViewModel.isEditable {
-                        editingCell = (rowIndex, colIndex)
+                        editingCell = (rowIndex, actualColIndex)
                         editText = cellValue.isNull ? "" : cellValue.description
                     }
                 }
 
-                if colIndex < row.count - 1 {
+                if visibleIndex < visibleIndices.count - 1 {
                     Divider()
                 }
             }

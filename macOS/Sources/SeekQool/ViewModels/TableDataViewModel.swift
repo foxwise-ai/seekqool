@@ -141,23 +141,73 @@ class TableDataViewModel: ObservableObject {
         pendingChanges.clear()
 
         do {
-            let (columns, rows) = try await postgresService.executeQuery(
-                configId: connectionConfig.id,
-                sql: query
-            )
+            var queryToExecute = query
+            var hiddenPkColumns: [String] = []
 
-            if let info = queryInfo, info.isEditable, let schema = info.schemaName, let table = info.tableName {
+            // For editable queries, ensure primary key columns are included
+            if let info = queryInfo, info.isEditable, let schema = info.schemaName, let tableName = info.tableName {
                 let tableColumns = try await postgresService.getColumns(
                     configId: connectionConfig.id,
                     schema: schema,
-                    table: table
+                    table: tableName
+                )
+
+                let pkColumnNames = tableColumns.filter { $0.isPrimaryKey }.map { $0.name }
+
+                // Check which PK columns are missing from the query
+                let queryLower = query.lowercased()
+                var missingPkColumns: [String] = []
+
+                for pkCol in pkColumnNames {
+                    // Simple check: see if the column name appears in the SELECT part
+                    // This is a heuristic - check if column name is in query before FROM
+                    if let fromRange = queryLower.range(of: "from") {
+                        let selectPart = String(queryLower[..<fromRange.lowerBound])
+                        if !selectPart.contains(pkCol.lowercased()) && !selectPart.contains("*") {
+                            missingPkColumns.append(pkCol)
+                        }
+                    }
+                }
+
+                // If there are missing PK columns, rewrite the query to include them
+                if !missingPkColumns.isEmpty {
+                    hiddenPkColumns = missingPkColumns
+                    queryToExecute = rewriteQueryWithPkColumns(query, missingPkColumns: missingPkColumns, schema: schema, table: tableName)
+                }
+            }
+
+            let (columns, rows) = try await postgresService.executeQuery(
+                configId: connectionConfig.id,
+                sql: queryToExecute
+            )
+
+            if let info = queryInfo, info.isEditable, let schema = info.schemaName, let tableName = info.tableName {
+                let tableColumns = try await postgresService.getColumns(
+                    configId: connectionConfig.id,
+                    schema: schema,
+                    table: tableName
                 )
 
                 let pkColumns = tableColumns.filter { $0.isPrimaryKey }.map { $0.name }
 
-                let mergedColumns = columns.enumerated().map { index, col -> ColumnInfo in
+                var mergedColumns = columns.map { col -> ColumnInfo in
                     if let tableCol = tableColumns.first(where: { $0.name == col.name }) {
                         return tableCol
+                    }
+                    return col
+                }
+
+                // Mark hidden PK columns
+                mergedColumns = mergedColumns.map { col in
+                    if hiddenPkColumns.contains(col.name) {
+                        return ColumnInfo(
+                            name: col.name,
+                            dataType: col.dataType,
+                            isNullable: col.isNullable,
+                            isPrimaryKey: col.isPrimaryKey,
+                            ordinalPosition: col.ordinalPosition,
+                            isHidden: true
+                        )
                     }
                     return col
                 }
@@ -260,13 +310,16 @@ class TableDataViewModel: ObservableObject {
         isLoading = true
         errorMessage = nil
 
-        let sql = pendingChanges.generateAllSQL()
+        let statements = pendingChanges.generateSQLStatements()
 
         do {
-            _ = try await postgresService.executeUpdate(
-                configId: connectionConfig.id,
-                sql: sql
-            )
+            // Execute each statement individually
+            for sql in statements {
+                _ = try await postgresService.executeUpdate(
+                    configId: connectionConfig.id,
+                    sql: sql
+                )
+            }
             pendingChanges.clear()
             isLoading = false
             return true
@@ -323,5 +376,34 @@ class TableDataViewModel: ObservableObject {
     private func syncSortToTabManager() {
         guard let tabManager = tabManager, let tabId = tabId else { return }
         tabManager.updateTabSort(tabId, columnIndex: sortColumnIndex, ascending: sortDirection == .ascending)
+    }
+
+    /// Rewrites a SELECT query to include missing primary key columns
+    private func rewriteQueryWithPkColumns(_ query: String, missingPkColumns: [String], schema: String, table: String) -> String {
+        // Find the position after SELECT (and optional DISTINCT)
+        let queryLower = query.lowercased()
+
+        guard let selectRange = queryLower.range(of: "select") else {
+            return query
+        }
+
+        var insertPosition = selectRange.upperBound
+
+        // Check for DISTINCT
+        let afterSelect = String(query[insertPosition...]).trimmingCharacters(in: .whitespaces)
+        if afterSelect.lowercased().hasPrefix("distinct") {
+            if let distinctRange = queryLower.range(of: "distinct", range: insertPosition..<query.endIndex) {
+                insertPosition = distinctRange.upperBound
+            }
+        }
+
+        // Build the PK columns string
+        let pkColumnsStr = missingPkColumns.map { "\"\(schema)\".\"\(table)\".\"\($0)\"" }.joined(separator: ", ")
+
+        // Insert the PK columns after SELECT [DISTINCT]
+        let beforeInsert = String(query[..<insertPosition])
+        let afterInsert = String(query[insertPosition...])
+
+        return "\(beforeInsert) \(pkColumnsStr),\(afterInsert)"
     }
 }
