@@ -55,8 +55,8 @@ Never push blind. Review every UPDATE statement before it hits your database.
 ### Build from Source
 
 ```bash
-git clone https://github.com/yourusername/seekqool.git
-cd seekqool/SeekQool
+git clone https://github.com/foxwise-ai/seekqool.git
+cd seekqool/macOS
 swift build -c release
 ```
 
