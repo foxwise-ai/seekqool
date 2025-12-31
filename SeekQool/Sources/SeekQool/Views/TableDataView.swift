@@ -26,7 +26,10 @@ struct TableDataView: View {
             statusBar
         }
         .task {
-            await dataViewModel.loadData()
+            // Only load if we don't have data yet (prevents reload on tab switch)
+            if dataViewModel.tableData.columns.isEmpty && !dataViewModel.isLoading {
+                await dataViewModel.loadData()
+            }
         }
     }
 

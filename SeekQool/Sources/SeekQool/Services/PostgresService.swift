@@ -59,12 +59,26 @@ actor PostgresService {
             tls: .disable
         )
 
-        let connection = try await PostgresConnection.connect(
-            on: eventLoopGroup.next(),
-            configuration: pgConfig,
-            id: 1,
-            logger: logger
-        )
+        // Use a timeout for connection attempts
+        let connection = try await withThrowingTaskGroup(of: PostgresConnection.self) { group in
+            group.addTask {
+                try await PostgresConnection.connect(
+                    on: self.eventLoopGroup.next(),
+                    configuration: pgConfig,
+                    id: 1,
+                    logger: self.logger
+                )
+            }
+
+            group.addTask {
+                try await Task.sleep(nanoseconds: 10_000_000_000) // 10 second timeout
+                throw PostgresError.connectionFailed("Connection timed out after 10 seconds")
+            }
+
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
 
         connections[config.id] = connection
         log("Connected successfully to \(config.database)")
@@ -87,12 +101,26 @@ actor PostgresService {
         guard let connection = connections[configId] else { return false }
 
         do {
-            let query = PostgresQuery(unsafeSQL: "SELECT 1")
-            let rows = try await connection.query(query, logger: logger)
-            for try await _ in rows {
-                return true
+            // Health check with 5 second timeout
+            return try await withThrowingTaskGroup(of: Bool.self) { group in
+                group.addTask {
+                    let query = PostgresQuery(unsafeSQL: "SELECT 1")
+                    let rows = try await connection.query(query, logger: self.logger)
+                    for try await _ in rows {
+                        return true
+                    }
+                    return true
+                }
+
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 5_000_000_000) // 5 second timeout
+                    throw PostgresError.connectionFailed("Health check timed out")
+                }
+
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
             }
-            return true
         } catch {
             log("Connection health check failed: \(error.localizedDescription)")
             return false
@@ -137,11 +165,24 @@ actor PostgresService {
         return connection
     }
 
-    private func executeWithReconnect<T>(configId: UUID, operation: (PostgresConnection) async throws -> T) async throws -> T {
-        // First attempt
+    private func executeWithReconnect<T: Sendable>(configId: UUID, operation: @Sendable @escaping (PostgresConnection) async throws -> T) async throws -> T {
+        // First attempt with timeout
         do {
             let connection = try await ensureConnection(configId: configId)
-            return try await operation(connection)
+            return try await withThrowingTaskGroup(of: T.self) { group in
+                group.addTask {
+                    try await operation(connection)
+                }
+
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 30_000_000_000) // 30 second query timeout
+                    throw PostgresError.queryFailed("Query timed out after 30 seconds")
+                }
+
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
         } catch {
             // Check if this looks like a connection error
             let errorString = String(describing: error).lowercased()
@@ -150,16 +191,30 @@ actor PostgresService {
                                    errorString.contains("reset") ||
                                    errorString.contains("broken") ||
                                    errorString.contains("eof") ||
-                                   errorString.contains("timeout")
+                                   errorString.contains("timed out")
 
             if isConnectionError {
                 log("Query failed with connection error, attempting reconnect...")
                 connections.removeValue(forKey: configId)
 
-                // Try to reconnect and retry
+                // Try to reconnect and retry (with timeout)
                 _ = try await reconnectIfNeeded(configId: configId)
                 let connection = try await ensureConnection(configId: configId)
-                return try await operation(connection)
+
+                return try await withThrowingTaskGroup(of: T.self) { group in
+                    group.addTask {
+                        try await operation(connection)
+                    }
+
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: 30_000_000_000) // 30 second query timeout
+                        throw PostgresError.queryFailed("Query timed out after 30 seconds")
+                    }
+
+                    let result = try await group.next()!
+                    group.cancelAll()
+                    return result
+                }
             } else {
                 throw error
             }
@@ -324,17 +379,18 @@ actor PostgresService {
         let offset = (page - 1) * pageSize
         let columnList = columns.map { "\"\($0.name)\"" }.joined(separator: ", ")
 
-        var sql = """
+        var sqlBuilder = """
             SELECT \(columnList)
             FROM "\(schema)"."\(table)"
             """
 
         if let sortCol = sortColumn {
             let direction = sortAscending ? "ASC" : "DESC"
-            sql += "\nORDER BY \"\(sortCol)\" \(direction) NULLS LAST"
+            sqlBuilder += "\nORDER BY \"\(sortCol)\" \(direction) NULLS LAST"
         }
 
-        sql += "\nLIMIT \(pageSize) OFFSET \(offset)"
+        sqlBuilder += "\nLIMIT \(pageSize) OFFSET \(offset)"
+        let sql = sqlBuilder
         logSQL(sql)
 
         return try await executeWithReconnect(configId: configId) { connection in
@@ -413,7 +469,7 @@ actor PostgresService {
         }
     }
 
-    private func decodeCell(from row: PostgresRandomAccessRow, at index: Int, dataType: String) throws -> CellValue {
+    private nonisolated func decodeCell(from row: PostgresRandomAccessRow, at index: Int, dataType: String) throws -> CellValue {
         let cell = row[index]
 
         guard var bytes = cell.bytes else {
