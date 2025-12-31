@@ -52,10 +52,20 @@ Never push blind. Review every UPDATE statement before it hits your database.
 
 ## Installation
 
-### Build from Source
+### Build & Install
 
 ```bash
 git clone https://github.com/foxwise-ai/seekqool.git
+cd seekqool/macOS
+./scripts/build.sh
+./scripts/install.sh
+```
+
+App installs to `~/Applications/SeekQool.app`.
+
+### Manual Build
+
+```bash
 cd seekqool/macOS
 swift build -c release
 ```
@@ -65,6 +75,7 @@ Binary lands in `.build/release/SeekQool`.
 ### Xcode
 
 ```bash
+cd seekqool/macOS
 open Package.swift
 ```
 
