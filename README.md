@@ -147,6 +147,12 @@ Found a bug? Want a feature? Open an issue or submit a PR.
 
 ---
 
+## Other Projects
+
+Check out [TheQuickFox.ai](https://www.thequickfox.ai/) —  Ask AI from any app about any app without breaking your flow. Special feature: reply to any message/email using a few words.
+
+---
+
 <p align="center">
   <strong>Stop fighting your database tools. Start shipping.</strong>
 </p>
