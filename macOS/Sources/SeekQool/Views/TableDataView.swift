@@ -132,11 +132,6 @@ struct TableDataView: View {
 
     var headerRow: some View {
         HStack(spacing: 0) {
-            Text("#")
-                .frame(width: 50, alignment: .center)
-                .padding(.vertical, 8)
-                .background(Color(NSColor.controlBackgroundColor))
-
             let visibleIndices = dataViewModel.tableData.visibleColumnIndices
             ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualIndex in
                 let column = dataViewModel.tableData.columns[actualIndex]
@@ -184,13 +179,6 @@ struct TableDataView: View {
 
     func dataRow(rowIndex: Int, row: [CellValue]) -> some View {
         HStack(spacing: 0) {
-            Text("\(rowIndex + 1)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .frame(width: 50, alignment: .center)
-                .padding(.vertical, 6)
-                .background(rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3))
-
             let visibleIndices = dataViewModel.tableData.visibleColumnIndices
             ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualColIndex in
                 let column = dataViewModel.tableData.columns[actualColIndex]
