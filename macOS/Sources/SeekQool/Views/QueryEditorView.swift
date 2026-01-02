@@ -153,8 +153,15 @@ struct QueryEditorView: View {
     }
 
     func executeQuery() {
-        let trimmed = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        // Replace curly/smart quotes with straight quotes
+        trimmed = trimmed
+            .replacingOccurrences(of: "'", with: "'")
+            .replacingOccurrences(of: "'", with: "'")
+            .replacingOccurrences(of: """, with: "\"")
+            .replacingOccurrences(of: """, with: "\"")
 
         isExecuting = true
         showResults = true
