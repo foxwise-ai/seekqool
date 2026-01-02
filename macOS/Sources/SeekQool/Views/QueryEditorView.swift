@@ -176,6 +176,7 @@ struct QueryEditorView: View {
 
 struct QueryResultsTableView: View {
     @ObservedObject var dataViewModel: TableDataViewModel
+    @State private var selectedCell: (row: Int, col: Int)?
     @State private var editingCell: (row: Int, col: Int)?
     @State private var editText: String = ""
 
@@ -255,6 +256,7 @@ struct QueryResultsTableView: View {
                 let column = dataViewModel.tableData.columns[actualColIndex]
                 let cellValue = row[actualColIndex]
                 let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: actualColIndex)
+                let isSelected = selectedCell?.row == rowIndex && selectedCell?.col == actualColIndex
                 let isEditing = editingCell?.row == rowIndex && editingCell?.col == actualColIndex
 
                 ZStack {
@@ -278,10 +280,12 @@ struct QueryResultsTableView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .background(
+                    isEditing ? Color.accentColor.opacity(0.15) :
+                    isSelected ? Color.accentColor.opacity(0.1) :
                     isModified ? Color.orange.opacity(0.2) :
                     (rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3))
                 )
-                .border(Color.accentColor, width: isEditing ? 2 : 0)
+                .border(Color.accentColor, width: isEditing ? 2 : (isSelected ? 1 : 0))
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
                     if dataViewModel.isEditable {
@@ -289,6 +293,16 @@ struct QueryResultsTableView: View {
                         editText = cellValue.isNull ? "" : cellValue.description
                     }
                 }
+                .simultaneousGesture(TapGesture().onEnded {
+                    // If editing another cell, commit the edit first
+                    if let editing = editingCell, (editing.row != rowIndex || editing.col != actualColIndex) {
+                        if !editText.isEmpty || dataViewModel.tableData.rows[editing.row][editing.col].isNull {
+                            dataViewModel.updateCell(rowIndex: editing.row, columnIndex: editing.col, newValue: editText)
+                        }
+                        editingCell = nil
+                    }
+                    selectedCell = (rowIndex, actualColIndex)
+                })
                 .contextMenu {
                     Button("Copy") {
                         NSPasteboard.general.clearContents()
