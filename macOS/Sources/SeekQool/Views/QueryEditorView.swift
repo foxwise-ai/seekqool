@@ -151,15 +151,8 @@ struct QueryEditorView: View {
     }
 
     func executeQuery() {
-        var trimmed = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-
-        // Replace curly/smart quotes with straight quotes
-        trimmed = trimmed
-            .replacingOccurrences(of: "\u{2018}", with: "'")  // left single quote
-            .replacingOccurrences(of: "\u{2019}", with: "'")  // right single quote
-            .replacingOccurrences(of: "\u{201C}", with: "\"") // left double quote
-            .replacingOccurrences(of: "\u{201D}", with: "\"") // right double quote
 
         isExecuting = true
         showResults = true
