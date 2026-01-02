@@ -186,7 +186,7 @@ struct TableDataView: View {
                 let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: actualColIndex)
                 let isEditing = editingCell?.row == rowIndex && editingCell?.col == actualColIndex
 
-                Group {
+                ZStack {
                     if isEditing && dataViewModel.isEditable {
                         TextField("", text: $editText, onCommit: {
                             commitEdit(rowIndex: rowIndex, colIndex: actualColIndex)
@@ -199,12 +199,17 @@ struct TableDataView: View {
                         Text(cellValue.description)
                             .foregroundColor(cellValue.isNull ? .secondary : .primary)
                             .italic(cellValue.isNull)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .frame(width: columnWidth(for: column), alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .background(cellBackground(isModified: isModified, rowIndex: rowIndex))
+                .background(
+                    isModified ? Color.orange.opacity(0.2) :
+                    (rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3))
+                )
+                .border(Color.accentColor, width: isEditing ? 2 : 0)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
                     if dataViewModel.isEditable {
