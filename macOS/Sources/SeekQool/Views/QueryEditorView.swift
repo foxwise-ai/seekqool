@@ -14,6 +14,7 @@ struct QueryEditorView: View {
 
     // Autocomplete state
     @State private var cursorPosition: Int = 0
+    @State private var cursorScreenPosition: CGPoint = .zero
     @State private var triggerCompletion: Bool = false
     @State private var completions: [CompletionItem] = []
     @State private var selectedCompletionIndex: Int = 0
@@ -79,14 +80,30 @@ struct QueryEditorView: View {
                     text: $queryText,
                     errorRange: $errorRange,
                     cursorPosition: $cursorPosition,
-                    triggerCompletion: $triggerCompletion
+                    triggerCompletion: $triggerCompletion,
+                    cursorScreenPosition: $cursorScreenPosition,
+                    onArrowUp: {
+                        if selectedCompletionIndex > 0 {
+                            selectedCompletionIndex -= 1
+                        }
+                    },
+                    onArrowDown: {
+                        if selectedCompletionIndex < min(completions.count, 8) - 1 {
+                            selectedCompletionIndex += 1
+                        }
+                    },
+                    onEnter: {
+                        if !completions.isEmpty && selectedCompletionIndex < completions.count {
+                            insertCompletion(completions[selectedCompletionIndex])
+                        }
+                    }
                 )
             }
 
-            // Completion popup
+            // Completion popup positioned near cursor
             if !completions.isEmpty {
                 completionPopup
-                    .offset(x: 50, y: 80) // Approximate position near cursor
+                    .offset(x: cursorScreenPosition.x + 8, y: cursorScreenPosition.y + 45)
             }
         }
     }

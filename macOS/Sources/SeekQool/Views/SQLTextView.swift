@@ -6,6 +6,10 @@ struct SQLTextView: NSViewRepresentable {
     @Binding var errorRange: NSRange?
     @Binding var cursorPosition: Int
     @Binding var triggerCompletion: Bool
+    @Binding var cursorScreenPosition: CGPoint
+    var onArrowUp: (() -> Void)?
+    var onArrowDown: (() -> Void)?
+    var onEnter: (() -> Void)?
     var onInsertCompletion: ((String, Int) -> Void)?
     var font: NSFont = .monospacedSystemFont(ofSize: 13, weight: .regular)
 
@@ -71,6 +75,9 @@ struct SQLTextView: NSViewRepresentable {
                 parent.cursorPosition = selection.location
             }
 
+            // Update cursor screen position
+            updateCursorScreenPosition(textView: textView)
+
             // Check if we should trigger completion (after typing . or starting a word)
             let cursorPos = textView.selectedRange().location
             if cursorPos > 0 {
@@ -85,6 +92,30 @@ struct SQLTextView: NSViewRepresentable {
             }
         }
 
+        func updateCursorScreenPosition(textView: NSTextView) {
+            let cursorRange = textView.selectedRange()
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: cursorRange, actualCharacterRange: nil)
+            let boundingRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+
+            // Convert to view coordinates
+            let origin = textView.textContainerOrigin
+            let cursorRect = NSRect(
+                x: boundingRect.origin.x + origin.x,
+                y: boundingRect.origin.y + origin.y + boundingRect.height,
+                width: 1,
+                height: boundingRect.height
+            )
+
+            // Convert to screen coordinates relative to the scroll view
+            if let scrollView = textView.enclosingScrollView {
+                let pointInScrollView = textView.convert(cursorRect.origin, to: scrollView)
+                parent.cursorScreenPosition = CGPoint(x: pointInScrollView.x, y: pointInScrollView.y)
+            }
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             if let selection = textView.selectedRanges.first as? NSRange {
@@ -95,9 +126,29 @@ struct SQLTextView: NSViewRepresentable {
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             // Handle Escape to dismiss completion
             if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-                parent.triggerCompletion = false
+                if parent.triggerCompletion {
+                    parent.triggerCompletion = false
+                    return true
+                }
                 return false
             }
+
+            // Handle arrow keys and enter when completion is active
+            if parent.triggerCompletion {
+                if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                    parent.onArrowUp?()
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                    parent.onArrowDown?()
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                    parent.onEnter?()
+                    return true
+                }
+            }
+
             return false
         }
 
