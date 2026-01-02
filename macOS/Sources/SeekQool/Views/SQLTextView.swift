@@ -4,6 +4,9 @@ import AppKit
 struct SQLTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var errorRange: NSRange?
+    @Binding var cursorPosition: Int
+    @Binding var triggerCompletion: Bool
+    var onInsertCompletion: ((String, Int) -> Void)?
     var font: NSFont = .monospacedSystemFont(ofSize: 13, weight: .regular)
 
     func makeCoordinator() -> Coordinator {
@@ -62,6 +65,40 @@ struct SQLTextView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
+
+            // Update cursor position
+            if let selection = textView.selectedRanges.first as? NSRange {
+                parent.cursorPosition = selection.location
+            }
+
+            // Check if we should trigger completion (after typing . or starting a word)
+            let cursorPos = textView.selectedRange().location
+            if cursorPos > 0 {
+                let text = textView.string
+                let index = text.index(text.startIndex, offsetBy: cursorPos - 1, limitedBy: text.endIndex) ?? text.endIndex
+                if index < text.endIndex {
+                    let lastChar = text[index]
+                    if lastChar == "." {
+                        parent.triggerCompletion = true
+                    }
+                }
+            }
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            if let selection = textView.selectedRanges.first as? NSRange {
+                parent.cursorPosition = selection.location
+            }
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            // Handle Escape to dismiss completion
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                parent.triggerCompletion = false
+                return false
+            }
+            return false
         }
 
         func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
@@ -110,6 +147,15 @@ struct SQLTextView: NSViewRepresentable {
                 textStorage.addAttribute(.underlineStyle, value: NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue, range: range)
                 textStorage.addAttribute(.underlineColor, value: NSColor.systemRed, range: range)
             }
+        }
+
+        func insertCompletion(_ completion: String, replacingFromPosition startPos: Int) {
+            guard let textView = textView else { return }
+            let currentPos = textView.selectedRange().location
+
+            // Replace from startPos to currentPos with the completion
+            let replaceRange = NSRange(location: startPos, length: currentPos - startPos)
+            textView.insertText(completion, replacementRange: replaceRange)
         }
     }
 }

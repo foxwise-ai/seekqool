@@ -12,6 +12,24 @@ struct QueryEditorView: View {
     @State private var showResults = false
     @State private var errorRange: NSRange?
 
+    // Autocomplete state
+    @State private var cursorPosition: Int = 0
+    @State private var triggerCompletion: Bool = false
+    @State private var completions: [CompletionItem] = []
+    @State private var selectedCompletionIndex: Int = 0
+    @StateObject private var autoCompleteProvider: SQLAutoCompleteProvider
+
+    init(connection: ConnectionConfig, postgresService: PostgresService, tabQuery: Binding<String?>, resultsViewModel: TableDataViewModel) {
+        self.connection = connection
+        self.postgresService = postgresService
+        self._tabQuery = tabQuery
+        self.resultsViewModel = resultsViewModel
+        self._autoCompleteProvider = StateObject(wrappedValue: SQLAutoCompleteProvider(
+            postgresService: postgresService,
+            connectionId: connection.id
+        ))
+    }
+
     var body: some View {
         VSplitView {
             editorPane
@@ -30,20 +48,99 @@ struct QueryEditorView: View {
             if !resultsViewModel.tableData.columns.isEmpty {
                 showResults = true
             }
+            // Load tables for autocomplete
+            Task {
+                await autoCompleteProvider.loadTables()
+            }
         }
         .onChange(of: queryText) { _, newValue in
             tabQuery = newValue
         }
+        .onChange(of: triggerCompletion) { _, triggered in
+            if triggered {
+                Task {
+                    completions = await autoCompleteProvider.getCompletions(for: queryText, cursorPosition: cursorPosition)
+                    selectedCompletionIndex = 0
+                }
+            } else {
+                completions = []
+            }
+        }
     }
 
     var editorPane: some View {
-        VStack(spacing: 0) {
-            editorToolbar
+        ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                editorToolbar
 
-            Divider()
+                Divider()
 
-            SQLTextView(text: $queryText, errorRange: $errorRange)
+                SQLTextView(
+                    text: $queryText,
+                    errorRange: $errorRange,
+                    cursorPosition: $cursorPosition,
+                    triggerCompletion: $triggerCompletion
+                )
+            }
+
+            // Completion popup
+            if !completions.isEmpty {
+                completionPopup
+                    .offset(x: 50, y: 80) // Approximate position near cursor
+            }
         }
+    }
+
+    var completionPopup: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(completions.prefix(8).enumerated()), id: \.element.id) { index, item in
+                HStack(spacing: 8) {
+                    Image(systemName: item.icon)
+                        .foregroundColor(.secondary)
+                        .frame(width: 16)
+
+                    Text(item.text)
+                        .fontWeight(index == selectedCompletionIndex ? .semibold : .regular)
+
+                    Spacer()
+
+                    Text(item.detail)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(index == selectedCompletionIndex ? Color.accentColor.opacity(0.2) : Color.clear)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    insertCompletion(item)
+                }
+            }
+        }
+        .frame(width: 250)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(6)
+        .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+        )
+    }
+
+    func insertCompletion(_ item: CompletionItem) {
+        // Find the start of the current word
+        let prefix = String(queryText.prefix(cursorPosition))
+        let wordStart = prefix.lastIndex(where: { $0 == "." || $0 == " " || $0 == "\n" || $0 == "(" })
+            .map { prefix.distance(from: prefix.startIndex, to: prefix.index(after: $0)) } ?? 0
+
+        // Replace the partial word with the completion
+        let before = String(queryText.prefix(wordStart))
+        let after = String(queryText.dropFirst(cursorPosition))
+        queryText = before + item.text + after
+
+        // Dismiss completions
+        triggerCompletion = false
+        completions = []
     }
 
     var editorToolbar: some View {
