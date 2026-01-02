@@ -58,6 +58,7 @@ class ConnectionStore: ObservableObject {
     func removeConnection(_ id: UUID) {
         connections.removeAll { $0.id == id }
         activeConnectionIds.remove(id)
+        KeychainService.deletePassword(for: id)
         saveConnections()
     }
 

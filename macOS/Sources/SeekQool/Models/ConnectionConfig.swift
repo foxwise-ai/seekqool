@@ -8,9 +8,18 @@ struct ConnectionConfig: Identifiable, Codable, Hashable {
     var port: Int
     var database: String
     var username: String
-    var password: String
     var iconName: String
     var iconColor: IconColor
+
+    // Password is stored in Keychain, not in JSON
+    var password: String {
+        get { KeychainService.getPassword(for: id) ?? "" }
+        set { try? KeychainService.savePassword(newValue, for: id) }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, host, port, database, username, iconName, iconColor
+    }
 
     init(
         id: UUID = UUID(),
@@ -29,13 +38,25 @@ struct ConnectionConfig: Identifiable, Codable, Hashable {
         self.port = port
         self.database = database
         self.username = username
-        self.password = password
         self.iconName = iconName
         self.iconColor = iconColor
+        // Save password to Keychain
+        if !password.isEmpty {
+            try? KeychainService.savePassword(password, for: id)
+        }
     }
 
     var connectionString: String {
         "postgres://\(username)@\(host):\(port)/\(database)"
+    }
+
+    // Custom hash/equatable that excludes password
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+
+    static func == (lhs: ConnectionConfig, rhs: ConnectionConfig) -> Bool {
+        lhs.id == rhs.id
     }
 }
 
