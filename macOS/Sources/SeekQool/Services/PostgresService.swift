@@ -113,7 +113,7 @@ actor PostgresService {
                 }
 
                 group.addTask {
-                    try await Task.sleep(nanoseconds: 5_000_000_000) // 5 second timeout
+                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2 second timeout
                     throw PostgresError.connectionFailed("Health check timed out")
                 }
 
@@ -151,9 +151,15 @@ actor PostgresService {
     }
 
     private func ensureConnection(configId: UUID) async throws -> PostgresConnection {
-        // Try to get existing connection
+        // Try to get existing connection and verify it's healthy
         if let connection = connections[configId] {
-            return connection
+            // Quick health check before using
+            if await isConnectionHealthy(configId: configId) {
+                return connection
+            }
+            // Connection is stale, remove it
+            log("Connection stale, removing...")
+            connections.removeValue(forKey: configId)
         }
 
         // Try to reconnect
@@ -163,6 +169,17 @@ actor PostgresService {
             throw PostgresError.notConnected
         }
         return connection
+    }
+
+    func forceReconnect(configId: UUID) async throws -> Bool {
+        log("Force reconnect requested...")
+        // Remove existing connection
+        if let connection = connections[configId] {
+            try? await connection.close()
+            connections.removeValue(forKey: configId)
+        }
+        // Reconnect
+        return try await reconnectIfNeeded(configId: configId)
     }
 
     private func executeWithReconnect<T: Sendable>(configId: UUID, operation: @Sendable @escaping (PostgresConnection) async throws -> T) async throws -> T {
