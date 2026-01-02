@@ -16,6 +16,8 @@ class AppViewModel: ObservableObject {
 
     // Cache for TableDataViewModels by tab ID
     private var tableViewModelCache: [UUID: TableDataViewModel] = [:]
+    // Cache for query results ViewModels by tab ID
+    private var queryViewModelCache: [UUID: TableDataViewModel] = [:]
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -67,6 +69,7 @@ class AppViewModel: ObservableObject {
         let tabsToRemove = tabManager.tabs.filter { $0.connectionId == config.id }.map { $0.id }
         for tabId in tabsToRemove {
             tableViewModelCache.removeValue(forKey: tabId)
+            queryViewModelCache.removeValue(forKey: tabId)
         }
         tabManager.closeAllTabs(forConnection: config.id)
     }
@@ -98,6 +101,22 @@ class AppViewModel: ObservableObject {
 
     func clearViewModelCache(for tabId: UUID) {
         tableViewModelCache.removeValue(forKey: tabId)
+        queryViewModelCache.removeValue(forKey: tabId)
+    }
+
+    func queryResultsViewModel(for tab: AppTab, connection: ConnectionConfig) -> TableDataViewModel {
+        if let cached = queryViewModelCache[tab.id] {
+            return cached
+        }
+
+        let viewModel = TableDataViewModel(
+            connection: connection,
+            table: nil,
+            postgresService: postgresService
+        )
+
+        queryViewModelCache[tab.id] = viewModel
+        return viewModel
     }
 
     func loadSchemas(for connectionId: UUID) async {

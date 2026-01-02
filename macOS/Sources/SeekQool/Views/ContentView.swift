@@ -63,7 +63,8 @@ struct MainContentArea: View {
                 QueryEditorView(
                     connection: connection,
                     postgresService: viewModel.postgresService,
-                    tabQuery: queryBinding(for: selectedTab.id)
+                    tabQuery: queryBinding(for: selectedTab.id),
+                    resultsViewModel: viewModel.queryResultsViewModel(for: selectedTab, connection: connection)
                 )
                 .id(selectedTab.id)
             }

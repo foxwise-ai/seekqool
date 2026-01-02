@@ -4,32 +4,20 @@ struct QueryEditorView: View {
     let connection: ConnectionConfig
     let postgresService: PostgresService
     @Binding var tabQuery: String?
+    @ObservedObject var resultsViewModel: TableDataViewModel
 
     @State private var queryText: String = ""
-    @StateObject private var resultsViewModel: TableDataViewModel
-
     @State private var isExecuting = false
     @State private var executionTime: TimeInterval?
     @State private var showResults = false
     @State private var errorRange: NSRange?
-
-    init(connection: ConnectionConfig, postgresService: PostgresService, tabQuery: Binding<String?>) {
-        self.connection = connection
-        self.postgresService = postgresService
-        self._tabQuery = tabQuery
-        self._resultsViewModel = StateObject(wrappedValue: TableDataViewModel(
-            connection: connection,
-            table: nil,
-            postgresService: postgresService
-        ))
-    }
 
     var body: some View {
         VSplitView {
             editorPane
                 .frame(minHeight: 150)
 
-            if showResults {
+            if showResults || !resultsViewModel.tableData.columns.isEmpty {
                 resultsPane
                     .frame(minHeight: 150)
             }
@@ -37,6 +25,10 @@ struct QueryEditorView: View {
         .onAppear {
             if let saved = tabQuery {
                 queryText = saved
+            }
+            // Show results pane if we have cached results
+            if !resultsViewModel.tableData.columns.isEmpty {
+                showResults = true
             }
         }
         .onChange(of: queryText) { _, newValue in
