@@ -11,6 +11,7 @@ struct QueryEditorView: View {
     @State private var isExecuting = false
     @State private var executionTime: TimeInterval?
     @State private var showResults = false
+    @State private var errorRange: NSRange?
 
     init(connection: ConnectionConfig, postgresService: PostgresService, tabQuery: Binding<String?>) {
         self.connection = connection
@@ -49,10 +50,7 @@ struct QueryEditorView: View {
 
             Divider()
 
-            TextEditor(text: $queryText)
-                .font(.system(.body, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .background(Color(NSColor.textBackgroundColor))
+            SQLTextView(text: $queryText, errorRange: $errorRange)
         }
     }
 
@@ -158,14 +156,15 @@ struct QueryEditorView: View {
 
         // Replace curly/smart quotes with straight quotes
         trimmed = trimmed
-            .replacingOccurrences(of: "'", with: "'")
-            .replacingOccurrences(of: "'", with: "'")
-            .replacingOccurrences(of: """, with: "\"")
-            .replacingOccurrences(of: """, with: "\"")
+            .replacingOccurrences(of: "\u{2018}", with: "'")  // left single quote
+            .replacingOccurrences(of: "\u{2019}", with: "'")  // right single quote
+            .replacingOccurrences(of: "\u{201C}", with: "\"") // left double quote
+            .replacingOccurrences(of: "\u{201D}", with: "\"") // right double quote
 
         isExecuting = true
         showResults = true
         executionTime = nil
+        errorRange = nil
 
         Task {
             let startTime = Date()
@@ -173,6 +172,11 @@ struct QueryEditorView: View {
             let endTime = Date()
             executionTime = endTime.timeIntervalSince(startTime)
             isExecuting = false
+
+            // If there was an error, highlight the whole query
+            if resultsViewModel.errorMessage != nil {
+                errorRange = NSRange(location: 0, length: queryText.utf16.count)
+            }
         }
     }
 }
