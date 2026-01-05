@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -18,16 +21,17 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Build
+      - name: Build Universal Binary
         run: |
           cd macOS
-          swift build -c release
+          # Build for both architectures
+          swift build -c release --arch arm64 --arch x86_64
 
       - name: Create App Bundle
         run: |
           cd macOS
           APP_NAME="SeekQool"
-          BUILD_DIR=".build/release"
+          BUILD_DIR=".build/apple/Products/Release"
           APP_DIR="${APP_NAME}.app"
 
           mkdir -p "${APP_DIR}/Contents/MacOS"

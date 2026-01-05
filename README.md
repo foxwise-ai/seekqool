@@ -56,7 +56,18 @@ Never push blind. Review every UPDATE statement before it hits your database.
 
 ## Installation
 
-### Build & Install
+### Download
+
+Grab the latest release from [GitHub Releases](https://github.com/foxwise-ai/seekqool/releases):
+
+1. Download `SeekQool-x.x.x.dmg`
+2. Open the DMG
+3. Drag **SeekQool** to **Applications**
+4. Launch from Applications (or Spotlight)
+
+> Works on both Apple Silicon and Intel Macs.
+
+### Build from Source
 
 ```bash
 git clone https://github.com/foxwise-ai/seekqool.git
@@ -75,15 +86,6 @@ swift build -c release
 ```
 
 Binary lands in `.build/release/SeekQool`.
-
-### Xcode
-
-```bash
-cd seekqool/macOS
-open Package.swift
-```
-
-Then **Product → Archive** for a distributable `.app`.
 
 ---
 
@@ -144,6 +146,21 @@ MIT
 ## Contributing
 
 Found a bug? Want a feature? Open an issue or submit a PR.
+
+### Creating a Release
+
+To publish a new version:
+
+```bash
+# Tag the release
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions will automatically:
+- Build a universal binary (Apple Silicon + Intel)
+- Create a DMG and ZIP
+- Publish to [GitHub Releases](https://github.com/foxwise-ai/seekqool/releases)
 
 ---
 
