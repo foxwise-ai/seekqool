@@ -24,14 +24,24 @@ jobs:
       - name: Build Universal Binary
         run: |
           cd macOS
-          # Build for both architectures
-          swift build -c release --arch arm64 --arch x86_64
+          # Build for ARM64
+          swift build -c release --arch arm64
+          mv .build/release/SeekQool .build/SeekQool-arm64
+
+          # Clean and build for x86_64
+          rm -rf .build/release
+          swift build -c release --arch x86_64
+          mv .build/release/SeekQool .build/SeekQool-x86_64
+
+          # Combine into universal binary
+          mkdir -p .build/release
+          lipo -create .build/SeekQool-arm64 .build/SeekQool-x86_64 -output .build/release/SeekQool
 
       - name: Create App Bundle
         run: |
           cd macOS
           APP_NAME="SeekQool"
-          BUILD_DIR=".build/apple/Products/Release"
+          BUILD_DIR=".build/release"
           APP_DIR="${APP_NAME}.app"
 
           mkdir -p "${APP_DIR}/Contents/MacOS"
