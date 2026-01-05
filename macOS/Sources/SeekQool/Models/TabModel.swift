@@ -12,7 +12,7 @@ struct AppTab: Identifiable, Hashable {
     let type: TabType
     var title: String
     var customQuery: String?
-    var sortColumnIndex: Int?
+    var sortColumnName: String?
     var sortAscending: Bool = true
 
     init(
@@ -21,14 +21,14 @@ struct AppTab: Identifiable, Hashable {
         type: TabType,
         title: String? = nil,
         customQuery: String? = nil,
-        sortColumnIndex: Int? = nil,
+        sortColumnName: String? = nil,
         sortAscending: Bool = true
     ) {
         self.id = id
         self.connectionId = connectionId
         self.type = type
         self.customQuery = customQuery
-        self.sortColumnIndex = sortColumnIndex
+        self.sortColumnName = sortColumnName
         self.sortAscending = sortAscending
 
         switch type {
@@ -56,7 +56,7 @@ struct SavedTabState: Codable {
     let tabType: SavedTabType
     let title: String
     let customQuery: String?
-    let sortColumnIndex: Int?
+    let sortColumnName: String?
     let sortAscending: Bool
 }
 
@@ -96,7 +96,7 @@ class SessionStateManager {
                 tabType: tabType,
                 title: tab.title,
                 customQuery: tab.customQuery,
-                sortColumnIndex: tab.sortColumnIndex,
+                sortColumnName: tab.sortColumnName,
                 sortAscending: tab.sortAscending
             )
         }
@@ -236,9 +236,9 @@ class TabManager: ObservableObject {
         }
     }
 
-    func updateTabSort(_ tabId: UUID, columnIndex: Int?, ascending: Bool) {
+    func updateTabSort(_ tabId: UUID, columnName: String?, ascending: Bool) {
         if let index = tabs.firstIndex(where: { $0.id == tabId }) {
-            tabs[index].sortColumnIndex = columnIndex
+            tabs[index].sortColumnName = columnName
             tabs[index].sortAscending = ascending
             saveState(for: tabs[index].connectionId)
         }
@@ -272,7 +272,7 @@ class TabManager: ObservableObject {
                 type: tabType,
                 title: savedTab.title,
                 customQuery: savedTab.customQuery,
-                sortColumnIndex: savedTab.sortColumnIndex,
+                sortColumnName: savedTab.sortColumnName,
                 sortAscending: savedTab.sortAscending
             )
             tabs.append(tab)

@@ -90,8 +90,8 @@ class AppViewModel: ObservableObject {
         )
 
         // Restore sort state from tab
-        if let sortCol = tab.sortColumnIndex {
-            viewModel.sortColumnIndex = sortCol
+        if let sortCol = tab.sortColumnName {
+            viewModel.sortColumnName = sortCol
             viewModel.sortDirection = tab.sortAscending ? .ascending : .descending
         }
 

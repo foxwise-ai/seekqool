@@ -20,7 +20,7 @@ class TableDataViewModel: ObservableObject {
     @Published var queryInfo: QueryInfo?
 
     // Sorting
-    @Published var sortColumnIndex: Int? = nil
+    @Published var sortColumnName: String? = nil
     @Published var sortDirection: SortDirection = .ascending
 
     let connectionConfig: ConnectionConfig
@@ -377,18 +377,19 @@ class TableDataViewModel: ObservableObject {
 
     // MARK: - Sorting
 
-    var sortColumnName: String? {
-        guard let index = sortColumnIndex, index < tableData.columns.count else {
-            return nil
-        }
-        return tableData.columns[index].name
+    var sortColumnIndex: Int? {
+        guard let name = sortColumnName else { return nil }
+        return tableData.columns.firstIndex { $0.name == name }
     }
 
     func toggleSort(columnIndex: Int) {
-        if sortColumnIndex == columnIndex {
+        guard columnIndex < tableData.columns.count else { return }
+        let columnName = tableData.columns[columnIndex].name
+
+        if sortColumnName == columnName {
             sortDirection = sortDirection.toggled
         } else {
-            sortColumnIndex = columnIndex
+            sortColumnName = columnName
             sortDirection = .ascending
         }
         syncSortToTabManager()
@@ -398,7 +399,7 @@ class TableDataViewModel: ObservableObject {
     }
 
     func clearSort() {
-        sortColumnIndex = nil
+        sortColumnName = nil
         sortDirection = .ascending
         syncSortToTabManager()
         Task {
@@ -408,7 +409,7 @@ class TableDataViewModel: ObservableObject {
 
     private func syncSortToTabManager() {
         guard let tabManager = tabManager, let tabId = tabId else { return }
-        tabManager.updateTabSort(tabId, columnIndex: sortColumnIndex, ascending: sortDirection == .ascending)
+        tabManager.updateTabSort(tabId, columnName: sortColumnName, ascending: sortDirection == .ascending)
     }
 
     /// Rewrites a SELECT query to include missing primary key columns
