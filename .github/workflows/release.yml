@@ -37,6 +37,30 @@ jobs:
           mkdir -p .build/release
           lipo -create .build/SeekQool-arm64 .build/SeekQool-x86_64 -output .build/release/SeekQool
 
+      - name: Create App Icon
+        run: |
+          cd macOS
+          ICON_SRC="assets/icon.png"
+          ICONSET="AppIcon.iconset"
+
+          mkdir -p "${ICONSET}"
+
+          # Generate all required sizes
+          sips -z 16 16     "${ICON_SRC}" --out "${ICONSET}/icon_16x16.png"
+          sips -z 32 32     "${ICON_SRC}" --out "${ICONSET}/icon_16x16@2x.png"
+          sips -z 32 32     "${ICON_SRC}" --out "${ICONSET}/icon_32x32.png"
+          sips -z 64 64     "${ICON_SRC}" --out "${ICONSET}/icon_32x32@2x.png"
+          sips -z 128 128   "${ICON_SRC}" --out "${ICONSET}/icon_128x128.png"
+          sips -z 256 256   "${ICON_SRC}" --out "${ICONSET}/icon_128x128@2x.png"
+          sips -z 256 256   "${ICON_SRC}" --out "${ICONSET}/icon_256x256.png"
+          sips -z 512 512   "${ICON_SRC}" --out "${ICONSET}/icon_256x256@2x.png"
+          sips -z 512 512   "${ICON_SRC}" --out "${ICONSET}/icon_512x512.png"
+          sips -z 1024 1024 "${ICON_SRC}" --out "${ICONSET}/icon_512x512@2x.png"
+
+          # Convert to icns
+          iconutil -c icns "${ICONSET}" -o AppIcon.icns
+          rm -rf "${ICONSET}"
+
       - name: Create App Bundle
         run: |
           cd macOS
@@ -48,24 +72,21 @@ jobs:
           mkdir -p "${APP_DIR}/Contents/Resources"
 
           cp "${BUILD_DIR}/${APP_NAME}" "${APP_DIR}/Contents/MacOS/"
+          cp "AppIcon.icns" "${APP_DIR}/Contents/Resources/"
 
           # Create Info.plist
           VERSION="${GITHUB_REF_NAME#v}"
-          cat > "${APP_DIR}/Contents/Info.plist" << EOF
+          cat > "${APP_DIR}/Contents/Info.plist" << 'PLISTEOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
               <key>CFBundleExecutable</key>
-              <string>${APP_NAME}</string>
+              <string>SeekQool</string>
               <key>CFBundleIdentifier</key>
               <string>com.foxwiseai.seekqool</string>
               <key>CFBundleName</key>
-              <string>${APP_NAME}</string>
-              <key>CFBundleVersion</key>
-              <string>${VERSION}</string>
-              <key>CFBundleShortVersionString</key>
-              <string>${VERSION}</string>
+              <string>SeekQool</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
               <key>LSMinimumSystemVersion</key>
@@ -74,15 +95,15 @@ jobs:
               <true/>
               <key>LSApplicationCategoryType</key>
               <string>public.app-category.developer-tools</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
           </dict>
           </plist>
-          EOF
+          PLISTEOF
 
-          # Copy icon if exists
-          if [ -f "Resources/AppIcon.icns" ]; then
-            cp "Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/"
-            /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "${APP_DIR}/Contents/Info.plist" 2>/dev/null || true
-          fi
+          # Add version
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${VERSION}" "${APP_DIR}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${VERSION}" "${APP_DIR}/Contents/Info.plist"
 
       - name: Create DMG
         run: |
