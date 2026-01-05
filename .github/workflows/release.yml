@@ -1,0 +1,103 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build
+        run: |
+          cd macOS
+          swift build -c release
+
+      - name: Create App Bundle
+        run: |
+          cd macOS
+          APP_NAME="SeekQool"
+          BUILD_DIR=".build/release"
+          APP_DIR="${APP_NAME}.app"
+
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
+
+          cp "${BUILD_DIR}/${APP_NAME}" "${APP_DIR}/Contents/MacOS/"
+
+          # Create Info.plist
+          VERSION="${GITHUB_REF_NAME#v}"
+          cat > "${APP_DIR}/Contents/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>${APP_NAME}</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.foxwiseai.seekqool</string>
+              <key>CFBundleName</key>
+              <string>${APP_NAME}</string>
+              <key>CFBundleVersion</key>
+              <string>${VERSION}</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${VERSION}</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>14.0</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>LSApplicationCategoryType</key>
+              <string>public.app-category.developer-tools</string>
+          </dict>
+          </plist>
+          EOF
+
+          # Copy icon if exists
+          if [ -f "Resources/AppIcon.icns" ]; then
+            cp "Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/"
+            /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "${APP_DIR}/Contents/Info.plist" 2>/dev/null || true
+          fi
+
+      - name: Create DMG
+        run: |
+          cd macOS
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG_NAME="SeekQool-${VERSION}.dmg"
+
+          # Create temporary directory for DMG contents
+          mkdir -p dmg_contents
+          cp -R SeekQool.app dmg_contents/
+          ln -s /Applications dmg_contents/Applications
+
+          # Create DMG
+          hdiutil create -volname "SeekQool" -srcfolder dmg_contents -ov -format UDZO "${DMG_NAME}"
+
+          rm -rf dmg_contents
+
+      - name: Create ZIP
+        run: |
+          cd macOS
+          VERSION="${GITHUB_REF_NAME#v}"
+          zip -r "SeekQool-${VERSION}.zip" SeekQool.app
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            macOS/SeekQool-*.dmg
+            macOS/SeekQool-*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
