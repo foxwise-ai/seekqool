@@ -356,82 +356,109 @@ struct QueryResultsTableView: View {
     }
 
     func dataRow(rowIndex: Int, row: [CellValue]) -> some View {
-        HStack(spacing: 0) {
-            let visibleIndices = dataViewModel.tableData.visibleColumnIndices
+        let isDeleted = dataViewModel.isRowDeleted(rowIndex: rowIndex)
+        let visibleIndices = dataViewModel.tableData.visibleColumnIndices
+
+        return HStack(spacing: 0) {
             ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualColIndex in
-                let column = dataViewModel.tableData.columns[actualColIndex]
-                let cellValue = row[actualColIndex]
-                let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: actualColIndex)
-                let isSelected = selectedCell?.row == rowIndex && selectedCell?.col == actualColIndex
-                let isEditing = editingCell?.row == rowIndex && editingCell?.col == actualColIndex
-
-                ZStack {
-                    if isEditing && dataViewModel.isEditable {
-                        TextField("", text: $editText, onCommit: {
-                            dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: actualColIndex, newValue: editText)
-                            editingCell = nil
-                        })
-                        .textFieldStyle(.plain)
-                        .font(.caption)
-                    } else {
-                        Text(cellValue.description)
-                            .font(.caption)
-                            .foregroundColor(cellValue.isNull ? .secondary : .primary)
-                            .italic(cellValue.isNull)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .frame(width: columnWidth(for: column), alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(
-                    isEditing ? Color.accentColor.opacity(0.15) :
-                    isSelected ? Color.accentColor.opacity(0.1) :
-                    isModified ? Color.orange.opacity(0.2) :
-                    (rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3))
-                )
-                .border(Color.accentColor, width: isEditing ? 2 : (isSelected ? 1 : 0))
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    if dataViewModel.isEditable {
-                        editingCell = (rowIndex, actualColIndex)
-                        editText = cellValue.isNull ? "" : cellValue.description
-                    }
-                }
-                .simultaneousGesture(TapGesture().onEnded {
-                    // If editing another cell, commit the edit first
-                    if let editing = editingCell, (editing.row != rowIndex || editing.col != actualColIndex) {
-                        if !editText.isEmpty || dataViewModel.tableData.rows[editing.row][editing.col].isNull {
-                            dataViewModel.updateCell(rowIndex: editing.row, columnIndex: editing.col, newValue: editText)
-                        }
-                        editingCell = nil
-                    }
-                    selectedCell = (rowIndex, actualColIndex)
-                })
-                .contextMenu {
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(cellValue.description, forType: .string)
-                    }
-                    if dataViewModel.isEditable {
-                        Divider()
-                        Button("Edit") {
-                            editingCell = (rowIndex, actualColIndex)
-                            editText = cellValue.isNull ? "" : cellValue.description
-                        }
-                        Button("Set NULL") {
-                            dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: actualColIndex, newValue: "NULL")
-                        }
-                    }
-                }
-
-                if visibleIndex < visibleIndices.count - 1 {
-                    Divider()
-                }
+                resultCellView(rowIndex: rowIndex, colIndex: actualColIndex, isDeleted: isDeleted, isLastColumn: visibleIndex >= visibleIndices.count - 1)
             }
         }
         .border(Color(NSColor.separatorColor).opacity(0.3), width: 0.5)
+    }
+
+    @ViewBuilder
+    func resultCellView(rowIndex: Int, colIndex: Int, isDeleted: Bool, isLastColumn: Bool) -> some View {
+        let column = dataViewModel.tableData.columns[colIndex]
+        let cellValue = dataViewModel.tableData.rows[rowIndex][colIndex]
+        let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: colIndex)
+        let isSelected = selectedCell?.row == rowIndex && selectedCell?.col == colIndex
+        let isEditing = editingCell?.row == rowIndex && editingCell?.col == colIndex
+
+        let bgColor: Color = {
+            if isDeleted { return Color.red.opacity(0.1) }
+            if isEditing { return Color.accentColor.opacity(0.15) }
+            if isSelected { return Color.accentColor.opacity(0.1) }
+            if isModified { return Color.orange.opacity(0.2) }
+            return rowIndex % 2 == 0 ? Color.clear : Color(NSColor.controlBackgroundColor).opacity(0.3)
+        }()
+
+        ZStack {
+            if isEditing && dataViewModel.isEditable && !isDeleted {
+                TextField("", text: $editText, onCommit: {
+                    dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: colIndex, newValue: editText)
+                    editingCell = nil
+                })
+                .textFieldStyle(.plain)
+                .font(.caption)
+            } else {
+                Text(cellValue.description)
+                    .font(.caption)
+                    .foregroundColor(isDeleted ? .red : (cellValue.isNull ? .secondary : .primary))
+                    .italic(cellValue.isNull)
+                    .strikethrough(isDeleted, color: .red)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(width: columnWidth(for: column), alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(bgColor)
+        .border(Color.accentColor, width: isEditing ? 2 : (isSelected ? 1 : 0))
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            if dataViewModel.isEditable && !isDeleted {
+                editingCell = (rowIndex, colIndex)
+                editText = cellValue.isNull ? "" : cellValue.description
+            }
+        }
+        .simultaneousGesture(TapGesture().onEnded {
+            if let editing = editingCell, (editing.row != rowIndex || editing.col != colIndex) {
+                if !editText.isEmpty || dataViewModel.tableData.rows[editing.row][editing.col].isNull {
+                    dataViewModel.updateCell(rowIndex: editing.row, columnIndex: editing.col, newValue: editText)
+                }
+                editingCell = nil
+            }
+            selectedCell = (rowIndex, colIndex)
+        })
+        .contextMenu {
+            resultCellContextMenu(rowIndex: rowIndex, colIndex: colIndex, cellValue: cellValue, isDeleted: isDeleted)
+        }
+
+        if !isLastColumn {
+            Divider()
+        }
+    }
+
+    @ViewBuilder
+    func resultCellContextMenu(rowIndex: Int, colIndex: Int, cellValue: CellValue, isDeleted: Bool) -> some View {
+        Button("Copy") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(cellValue.description, forType: .string)
+        }
+        if dataViewModel.isEditable {
+            Divider()
+            if isDeleted {
+                Button("Undo Delete") {
+                    dataViewModel.undoDeleteRow(rowIndex: rowIndex)
+                }
+            } else {
+                Button("Edit") {
+                    editingCell = (rowIndex, colIndex)
+                    editText = cellValue.isNull ? "" : cellValue.description
+                }
+                Button("Set NULL") {
+                    dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: colIndex, newValue: "NULL")
+                }
+                Divider()
+                Button {
+                    dataViewModel.deleteRow(rowIndex: rowIndex)
+                } label: {
+                    Label("Delete Row", systemImage: "trash")
+                }
+            }
+        }
     }
 
     var changesToolbar: some View {

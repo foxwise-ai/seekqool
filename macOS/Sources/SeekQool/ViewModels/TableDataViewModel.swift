@@ -342,6 +342,34 @@ class TableDataViewModel: ObservableObject {
         pendingChanges.editForCell(rowIndex: rowIndex, columnIndex: columnIndex) != nil
     }
 
+    func isRowDeleted(rowIndex: Int) -> Bool {
+        pendingChanges.isRowDeleted(rowIndex)
+    }
+
+    func deleteRow(rowIndex: Int) {
+        guard rowIndex < tableData.rows.count else { return }
+
+        var pkValues: [String: CellValue] = [:]
+        for pkColumn in tableData.primaryKeyColumns {
+            if let pkIndex = tableData.columns.firstIndex(where: { $0.name == pkColumn }) {
+                pkValues[pkColumn] = tableData.rows[rowIndex][pkIndex]
+            }
+        }
+
+        let deletion = RowDeletion(
+            rowIndex: rowIndex,
+            primaryKeyValues: pkValues,
+            tableName: tableName,
+            schemaName: schemaName
+        )
+
+        pendingChanges.addDeletion(deletion)
+    }
+
+    func undoDeleteRow(rowIndex: Int) {
+        pendingChanges.removeDeletion(at: rowIndex)
+    }
+
     // MARK: - Sorting
 
     var sortColumnName: String? {

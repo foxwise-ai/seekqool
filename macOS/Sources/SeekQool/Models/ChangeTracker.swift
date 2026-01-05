@@ -30,15 +30,57 @@ struct CellEdit: Identifiable, Hashable {
     }
 }
 
+struct RowDeletion: Identifiable, Hashable {
+    let id = UUID()
+    let rowIndex: Int
+    let primaryKeyValues: [String: CellValue]
+    let tableName: String
+    let schemaName: String
+
+    func generateSQL() -> String {
+        guard !primaryKeyValues.isEmpty else {
+            return "-- ERROR: No primary key found for table \(schemaName).\(tableName). Cannot generate DELETE."
+        }
+
+        let whereClause = primaryKeyValues.map { key, value in
+            "\"\(key)\" = \(value.sqlLiteral())"
+        }.joined(separator: " AND ")
+
+        return """
+        DELETE FROM "\(schemaName)"."\(tableName)"
+        WHERE \(whereClause);
+        """
+    }
+}
+
 class PendingChanges: ObservableObject {
     @Published var edits: [CellEdit] = []
+    @Published var deletions: [RowDeletion] = []
 
     var hasChanges: Bool {
-        !edits.isEmpty
+        !edits.isEmpty || !deletions.isEmpty
     }
 
     var changeCount: Int {
-        edits.count
+        edits.count + deletions.count
+    }
+
+    func isRowDeleted(_ rowIndex: Int) -> Bool {
+        deletions.contains { $0.rowIndex == rowIndex }
+    }
+
+    func addDeletion(_ deletion: RowDeletion) {
+        // Don't add duplicate deletions
+        guard !deletions.contains(where: { $0.rowIndex == deletion.rowIndex }) else { return }
+
+        // Remove any edits for this row since it's being deleted
+        edits.removeAll { $0.rowIndex == deletion.rowIndex }
+
+        deletions.append(deletion)
+    }
+
+    func removeDeletion(at rowIndex: Int) {
+        deletions.removeAll { $0.rowIndex == rowIndex }
     }
 
     func addEdit(_ edit: CellEdit) {
@@ -67,20 +109,30 @@ class PendingChanges: ObservableObject {
 
     func clear() {
         edits.removeAll()
+        deletions.removeAll()
     }
 
     func generateAllSQL() -> String {
-        if edits.isEmpty {
+        if edits.isEmpty && deletions.isEmpty {
             return "-- No pending changes"
         }
 
         var sql = "-- SeekQool Generated SQL\n"
-        sql += "-- \(edits.count) change(s) pending\n"
+        sql += "-- \(changeCount) change(s) pending\n"
         sql += "-- Generated at: \(ISO8601DateFormatter().string(from: Date()))\n\n"
 
-        for (index, edit) in edits.enumerated() {
-            sql += "-- Change \(index + 1): Update \(edit.columnName) in row\n"
+        var changeIndex = 1
+
+        for edit in edits {
+            sql += "-- Change \(changeIndex): Update \(edit.columnName) in row\n"
             sql += edit.generateSQL() + "\n\n"
+            changeIndex += 1
+        }
+
+        for deletion in deletions {
+            sql += "-- Change \(changeIndex): Delete row\n"
+            sql += deletion.generateSQL() + "\n\n"
+            changeIndex += 1
         }
 
         return sql
@@ -88,7 +140,9 @@ class PendingChanges: ObservableObject {
 
     /// Returns individual SQL statements for execution
     func generateSQLStatements() -> [String] {
-        edits.map { $0.generateSQL() }
+        var statements = edits.map { $0.generateSQL() }
+        statements.append(contentsOf: deletions.map { $0.generateSQL() })
+        return statements
     }
 
     func editForCell(rowIndex: Int, columnIndex: Int) -> CellEdit? {
