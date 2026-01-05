@@ -5,6 +5,8 @@ struct TableDataView: View {
     @State private var selectedCell: (row: Int, col: Int)?
     @State private var editingCell: (row: Int, col: Int)?
     @State private var editText: String = ""
+    @State private var rowToDelete: Int?
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,6 +33,21 @@ struct TableDataView: View {
             if dataViewModel.tableData.columns.isEmpty && !dataViewModel.isLoading {
                 await dataViewModel.loadData()
             }
+        }
+        .alert("Delete Row?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {
+                rowToDelete = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let row = rowToDelete {
+                    Task {
+                        _ = await dataViewModel.deleteRow(rowIndex: row)
+                        rowToDelete = nil
+                    }
+                }
+            }
+        } message: {
+            Text("This will permanently delete the row from the database.")
         }
     }
 
@@ -179,19 +196,18 @@ struct TableDataView: View {
     }
 
     func dataRow(rowIndex: Int, row: [CellValue]) -> some View {
-        let isDeleted = dataViewModel.isRowDeleted(rowIndex: rowIndex)
         let visibleIndices = dataViewModel.tableData.visibleColumnIndices
 
         return HStack(spacing: 0) {
             ForEach(Array(visibleIndices.enumerated()), id: \.element) { visibleIndex, actualColIndex in
-                cellView(rowIndex: rowIndex, colIndex: actualColIndex, isDeleted: isDeleted, isLastColumn: visibleIndex >= visibleIndices.count - 1)
+                cellView(rowIndex: rowIndex, colIndex: actualColIndex, isLastColumn: visibleIndex >= visibleIndices.count - 1)
             }
         }
         .border(Color(NSColor.separatorColor).opacity(0.5), width: 0.5)
     }
 
     @ViewBuilder
-    func cellView(rowIndex: Int, colIndex: Int, isDeleted: Bool, isLastColumn: Bool) -> some View {
+    func cellView(rowIndex: Int, colIndex: Int, isLastColumn: Bool) -> some View {
         let column = dataViewModel.tableData.columns[colIndex]
         let cellValue = dataViewModel.tableData.rows[rowIndex][colIndex]
         let isModified = dataViewModel.isCellModified(rowIndex: rowIndex, columnIndex: colIndex)
@@ -199,7 +215,6 @@ struct TableDataView: View {
         let isEditing = editingCell?.row == rowIndex && editingCell?.col == colIndex
 
         let bgColor: Color = {
-            if isDeleted { return Color.red.opacity(0.1) }
             if isEditing { return Color.accentColor.opacity(0.15) }
             if isSelected { return Color.accentColor.opacity(0.1) }
             if isModified { return Color.orange.opacity(0.2) }
@@ -207,7 +222,7 @@ struct TableDataView: View {
         }()
 
         ZStack {
-            if isEditing && dataViewModel.isEditable && !isDeleted {
+            if isEditing && dataViewModel.isEditable {
                 TextField("", text: $editText, onCommit: {
                     commitEdit(rowIndex: rowIndex, colIndex: colIndex)
                 })
@@ -215,9 +230,8 @@ struct TableDataView: View {
                 .onExitCommand { cancelEdit() }
             } else {
                 Text(cellValue.description)
-                    .foregroundColor(isDeleted ? .red : (cellValue.isNull ? .secondary : .primary))
+                    .foregroundColor(cellValue.isNull ? .secondary : .primary)
                     .italic(cellValue.isNull)
-                    .strikethrough(isDeleted, color: .red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -228,7 +242,7 @@ struct TableDataView: View {
         .border(Color.accentColor, width: isEditing ? 2 : (isSelected ? 1 : 0))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            if dataViewModel.isEditable && !isDeleted {
+            if dataViewModel.isEditable {
                 startEditing(rowIndex: rowIndex, colIndex: colIndex, value: cellValue)
             }
         }
@@ -239,7 +253,7 @@ struct TableDataView: View {
             selectedCell = (rowIndex, colIndex)
         })
         .contextMenu {
-            cellContextMenu(rowIndex: rowIndex, colIndex: colIndex, cellValue: cellValue, isDeleted: isDeleted, isModified: isModified)
+            cellContextMenu(rowIndex: rowIndex, colIndex: colIndex, cellValue: cellValue, isModified: isModified)
         }
 
         if !isLastColumn {
@@ -248,31 +262,26 @@ struct TableDataView: View {
     }
 
     @ViewBuilder
-    func cellContextMenu(rowIndex: Int, colIndex: Int, cellValue: CellValue, isDeleted: Bool, isModified: Bool) -> some View {
+    func cellContextMenu(rowIndex: Int, colIndex: Int, cellValue: CellValue, isModified: Bool) -> some View {
         if dataViewModel.isEditable {
-            if isDeleted {
-                Button("Undo Delete") {
-                    dataViewModel.undoDeleteRow(rowIndex: rowIndex)
-                }
-            } else {
-                Button("Edit") {
-                    startEditing(rowIndex: rowIndex, colIndex: colIndex, value: cellValue)
-                }
-                Button("Set to NULL") {
-                    dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: colIndex, newValue: "NULL")
-                }
-                if isModified, let edit = dataViewModel.pendingChanges.editForCell(rowIndex: rowIndex, columnIndex: colIndex) {
-                    Divider()
-                    Button("Rollback This Cell") {
-                        dataViewModel.rollbackEdit(edit)
-                    }
-                }
+            Button("Edit") {
+                startEditing(rowIndex: rowIndex, colIndex: colIndex, value: cellValue)
+            }
+            Button("Set to NULL") {
+                dataViewModel.updateCell(rowIndex: rowIndex, columnIndex: colIndex, newValue: "NULL")
+            }
+            if isModified, let edit = dataViewModel.pendingChanges.editForCell(rowIndex: rowIndex, columnIndex: colIndex) {
                 Divider()
-                Button {
-                    dataViewModel.deleteRow(rowIndex: rowIndex)
-                } label: {
-                    Label("Delete Row", systemImage: "trash")
+                Button("Rollback This Cell") {
+                    dataViewModel.rollbackEdit(edit)
                 }
+            }
+            Divider()
+            Button {
+                rowToDelete = rowIndex
+                showDeleteConfirmation = true
+            } label: {
+                Label("Delete Row", systemImage: "trash")
             }
         }
         Button("Copy") {

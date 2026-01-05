@@ -342,12 +342,8 @@ class TableDataViewModel: ObservableObject {
         pendingChanges.editForCell(rowIndex: rowIndex, columnIndex: columnIndex) != nil
     }
 
-    func isRowDeleted(rowIndex: Int) -> Bool {
-        pendingChanges.isRowDeleted(rowIndex)
-    }
-
-    func deleteRow(rowIndex: Int) {
-        guard rowIndex < tableData.rows.count else { return }
+    func deleteRow(rowIndex: Int) async -> Bool {
+        guard rowIndex < tableData.rows.count else { return false }
 
         var pkValues: [String: CellValue] = [:]
         for pkColumn in tableData.primaryKeyColumns {
@@ -356,18 +352,27 @@ class TableDataViewModel: ObservableObject {
             }
         }
 
-        let deletion = RowDeletion(
-            rowIndex: rowIndex,
-            primaryKeyValues: pkValues,
-            tableName: tableName,
-            schemaName: schemaName
-        )
+        guard !pkValues.isEmpty else {
+            errorMessage = "Cannot delete: no primary key"
+            return false
+        }
 
-        pendingChanges.addDeletion(deletion)
-    }
+        let whereClause = pkValues.map { key, value in
+            "\"\(key)\" = \(value.sqlLiteral())"
+        }.joined(separator: " AND ")
 
-    func undoDeleteRow(rowIndex: Int) {
-        pendingChanges.removeDeletion(at: rowIndex)
+        let sql = "DELETE FROM \"\(schemaName)\".\"\(tableName)\" WHERE \(whereClause);"
+
+        do {
+            _ = try await postgresService.executeUpdate(configId: connectionConfig.id, sql: sql)
+            // Remove row from local data
+            tableData.rows.remove(at: rowIndex)
+            tableData.totalRowCount -= 1
+            return true
+        } catch {
+            errorMessage = "Delete failed: \(error.localizedDescription)"
+            return false
+        }
     }
 
     // MARK: - Sorting
