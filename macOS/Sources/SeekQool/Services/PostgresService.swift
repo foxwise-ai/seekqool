@@ -681,6 +681,23 @@ actor PostgresService {
             }
         }
 
+        // Handle UUID - PostgreSQL sends as 16 raw bytes
+        if lowerType == "uuid" {
+            if bytes.readableBytes == 16 {
+                let uuidBytes = bytes.readBytes(length: 16)!
+                let uuidString = String(format: "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                    uuidBytes[0], uuidBytes[1], uuidBytes[2], uuidBytes[3],
+                    uuidBytes[4], uuidBytes[5],
+                    uuidBytes[6], uuidBytes[7],
+                    uuidBytes[8], uuidBytes[9],
+                    uuidBytes[10], uuidBytes[11], uuidBytes[12], uuidBytes[13], uuidBytes[14], uuidBytes[15])
+                if let uuid = UUID(uuidString: uuidString) {
+                    return .uuid(uuid)
+                }
+                return .string(uuidString)
+            }
+        }
+
         let stringValue = String(decoding: bytes.readableBytesView, as: UTF8.self)
 
         // Handle numeric/decimal as string (variable precision)
@@ -691,6 +708,7 @@ actor PostgresService {
             return .string(stringValue)
         }
 
+        // Fallback UUID handling for text format
         if lowerType == "uuid" {
             if let uuid = UUID(uuidString: stringValue) {
                 return .uuid(uuid)
