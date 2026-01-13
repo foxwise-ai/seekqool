@@ -36,6 +36,8 @@ struct TabItemView: View {
     let onClose: () -> Void
 
     @State private var isHovering = false
+    @State private var isEditing = false
+    @State private var editedTitle = ""
 
     var body: some View {
         HStack(spacing: 6) {
@@ -49,9 +51,24 @@ struct TabItemView: View {
                 .foregroundColor(.secondary)
                 .font(.system(size: 10))
 
-            Text(tab.title)
+            if isEditing {
+                TextField("", text: $editedTitle, onCommit: {
+                    if !editedTitle.isEmpty {
+                        viewModel.tabManager.updateTabTitle(tab.id, title: editedTitle)
+                    }
+                    isEditing = false
+                })
+                .textFieldStyle(.plain)
                 .font(.system(size: 12))
-                .lineLimit(1)
+                .frame(minWidth: 60)
+                .onExitCommand {
+                    isEditing = false
+                }
+            } else {
+                Text(tab.title)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+            }
 
             if isHovering || isSelected {
                 Button(action: onClose) {
@@ -69,8 +86,17 @@ struct TabItemView: View {
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
+        .onTapGesture(count: 2) {
+            editedTitle = tab.title
+            isEditing = true
+        }
         .onHover { isHovering = $0 }
         .contextMenu {
+            Button("Rename") {
+                editedTitle = tab.title
+                isEditing = true
+            }
+            Divider()
             Button("Close Tab") { onClose() }
             Button("Close Other Tabs") {
                 let otherIds = viewModel.tabManager.tabs.filter { $0.id != tab.id }.map { $0.id }
